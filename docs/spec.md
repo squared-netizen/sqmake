@@ -149,7 +149,8 @@ CI's clang refuse its own std module (sqterm #21, 2026-11-19).
 
 Before it compiles, sqmake asks `clang-scan-deps` for each source's module
 dependencies (the P1689 format) and orders the compiles by them: a module's
-interface is compiled before what imports it.
+interface is compiled before what imports it. sqterm's `llvm` package ships
+`clang-scan-deps` with clang 23.
 
 ### 5.2 Compiled modules (decided)
 
@@ -252,5 +253,3 @@ auto ctx = sqmake::Context::create({.lua = {L}});    // the host passes one
 - [ ] Do new projects keep plain make until sqmake exists?
 - [ ] Which Lua API is stable for other tools?
 - [ ] The build file's name (`build.lua` is proposed).
-- [ ] `clang-scan-deps` ships in sqterm's `llvm` or `llvm-tools` package
-      (not yet checked).
