@@ -18,6 +18,10 @@ it starts.
 - **A library, `libsqmake`, with a thin command line.** Offline, no daemon,
   and `--explain` shows the whole resolved graph.
 
+## The specification
+
+[docs/spec.md](docs/spec.md): a draft (0.1, 2026-11-19).
+
 ## Where it sits
 
 In the SDK's workflow sqpg creates a workspace, square manages it, and
