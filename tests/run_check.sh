@@ -112,6 +112,10 @@ L
 grep -q 'made by two targets' out.txt || die "two makers' message: $(cat out.txt)"
 ok "a cycle, a missing input, two makers: refused"
 
+# $CXX in words, as make takes it: a compiler and its own flags.
+CXX="$CXX -DFROM_CXX=1" "$sqmake" --explain | grep -q -- "-DFROM_CXX=1 -std=c++23" || die "CXX was not split into words"
+ok "CXX in words"
+
 "$sqmake" clean > /dev/null
 [ ! -e build/hello ] && [ ! -e build/.sqmake/state ] || die "clean left files"
 ok "clean: outputs and state gone"

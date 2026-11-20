@@ -29,4 +29,4 @@ jobs:
           CXX: clang++
         run: |
           clang++ --version | head -n 1
-          make -j4 test CXX="clang++ -stdlib=libc++" AR=llvm-ar
+          make -j4 test CXX=clang++ AR=llvm-ar

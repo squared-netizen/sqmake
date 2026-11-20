@@ -37,9 +37,16 @@ namespace sqmake {
 
 constexpr std::string_view prelude = R"lua(
 -- sqmake's prelude: what a build file can use without defining it.
+-- $CXX and $CC as make takes them: words, so "ccache clang++" or
+-- "clang++ -stdlib=libc++" work.
+local function words(s)
+  local out = {}
+  for w in s:gmatch("%S+") do out[#out + 1] = w end
+  return out
+end
 toolchain = {
-  cxx = os.getenv("CXX") or "clang++",
-  cc = os.getenv("CC") or "clang",
+  cxx = words(os.getenv("CXX") or "clang++"),
+  cc = words(os.getenv("CC") or "clang"),
   cxxflags = {"-std=c++23", "-O2"},
   cflags = {"-O2"},
   ldflags = {},
