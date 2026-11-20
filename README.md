@@ -1,11 +1,30 @@
 # sqmake
 
 The build system of the [squared SDK](https://squared-netizen.github.io/squared-netizen/):
-it builds an application from a workspace, knowing how to build it rather
-than what a workspace is.
+it builds what a project's `build.lua` describes, on its own.
 
-**Status: planned.** Nothing is built yet; this repository holds the work as
-it starts.
+**Status: phase 1 of 4 built** (sqmake 0.1.0): the engine. Toolchains and
+C++ modules, conventions and building sqterm come next
+([docs/spec.md §11](docs/spec.md)).
+
+```sh
+make CXX="clang++ -stdlib=libc++"     # clang and libc++ 23; make test checks it
+build/sqmake                          # builds what build.lua's default() names
+build/sqmake --explain                # each command that would run, and why
+build/sqmake -j 4 GOAL                # a goal, four commands at once
+build/sqmake clean
+```
+
+A `build.lua`:
+
+```lua
+toolchain.cxxflags = {"-std=c++23", "-O2"}
+exe("hello", map(glob("src/*.cpp"), rules.cxx))
+```
+
+A target is rebuilt when an output is missing, its command changed, or an
+input or a header its last compile read is newer. Commands run as argument
+lists, without a shell, each one's output printed whole.
 
 ## What it will be
 
@@ -20,13 +39,14 @@ it starts.
 
 ## The specification
 
-[docs/spec.md](docs/spec.md): a draft (0.1, 2026-11-19).
+[docs/spec.md](docs/spec.md): a draft (0.2, 2026-11-20).
 
 ## Where it sits
 
-In the SDK's workflow sqpg creates a workspace, square manages it, and
-sqmake builds it. sqmake asks square what to build (`square build-inputs`)
-and knows nothing about workspaces itself.
+sqmake stands alone. It builds what a project's `build.lua` describes, and
+depends on no other tool of the SDK: it reads nothing of sqpg's or square's
+and runs none of their commands. They, and any other program, may use it
+through its command line or its library; it never uses them.
 
 ## Licence
 

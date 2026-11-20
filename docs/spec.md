@@ -1,6 +1,6 @@
 # sqmake: draft specification
 
-**Status: draft 0.1, 2026-11-19.** Nothing here is built yet. What this
+**Status: draft 0.2, 2026-11-20.** Phase 1 (§11) is built. What this
 specification decides is marked as decided; what it only proposes is marked
 as proposed, and the open questions are listed at the end. It grows from the
 research note "sqpg Build System: Research and Recommendations" (2026-11-16)
@@ -8,10 +8,14 @@ and the SDK's plan for one C++23 toolchain (2026-11-19).
 
 ## 1. What sqmake is
 
-sqmake is the squared SDK's build system. It builds an application from a
-workspace: it knows how to build, not what a workspace is. sqpg creates a
-workspace, square manages it, and sqmake builds it; sqmake asks square what to
-build (`square build-inputs`) and knows nothing else about workspaces.
+sqmake is the squared SDK's build system. It builds what a project's
+`build.lua` describes, and nothing else tells it what to build.
+
+**It stands alone** (decided 2026-11-20). sqmake depends on no other tool of
+the SDK: it reads no file, path or setting of sqpg's or square's, and runs
+none of their commands. They may use it, through its command line or
+`libsqmake`, as any program may; it never uses them. A project with a
+`build.lua` builds with sqmake and nothing else, however it was made.
 
 It keeps make's model (targets, prerequisites, a target rebuilt when what it
 is made from changes) and drops make's syntax. It runs the build itself: it
@@ -203,14 +207,14 @@ rules), **Factory** (`Context::create`).
 ### 7.1 Packaging (decided)
 
 - **`libsqmake`**: the graph, the executor and the Lua bindings. It knows
-  nothing of sqpg or square: they use it, never the reverse.
+  nothing of the programs that use it (§1).
 - **`sqmake`**: a thin command line over the library. A feature the command
   line needs and the library lacks is a gap in the library.
 - **Interface:** C++23 modules. A small C interface over them can come later,
   if a tool in another language needs one.
-- **One binary, later:** sqpg, sqmake and sqcart may share one binary that
-  dispatches on its name (as busybox does). That is packaging, not design:
-  each keeps its own `main()`.
+- **Its own program:** sqmake is installed, versioned and released on its
+  own (in sqterm: `pkg install sqmake`), never folded into another tool's
+  binary.
 
 ### 7.2 Lua state (decided)
 
@@ -221,10 +225,12 @@ auto ctx = sqmake::Context::create({});              // sqmake makes its own sta
 auto ctx = sqmake::Context::create({.lua = {L}});    // the host passes one
 ```
 
-- **Alone** (the command line, an IDE): sqmake makes a state and closes it
-  when the context goes.
-- **Embedded** (sqpg): sqmake uses the host's state, never closes it, and
-  puts its API in its own `sqmake` table.
+- **Alone** (the command line): sqmake makes a state and closes it when the
+  context goes.
+- **Embedded** (any program with a Lua 5.4 state of its own: an editor, an
+  IDE, another of the SDK's tools): sqmake uses the host's state, never
+  closes it, and puts its API in its own `sqmake` table. The host gets no
+  hook into sqmake beyond that API.
 - **Version:** `create()` refuses anything but Lua 5.4, as a
   `std::expected` error.
 - **Sandbox:** a build file runs in its own environment table and reaches the
@@ -234,8 +240,9 @@ auto ctx = sqmake::Context::create({.lua = {L}});    // the host passes one
 
 - **Code with its own build** (a library built with CMake, say) is a prebuilt
   artifact or one opaque step, never reimplemented.
-- **Workspaces, templates and kits** are square's and sqpg's; sqmake is told
-  what to build.
+- **Making projects**: workspaces, templates and kits are other tools'
+  (sqpg, square). What they make, sqmake builds through its `build.lua`,
+  like any project's.
 
 ## 9. Risks
 
@@ -246,10 +253,29 @@ auto ctx = sqmake::Context::create({.lua = {L}});    // the host passes one
 - **Full Lua permits unreadable build files.** Whether to narrow the API, as
   Meson narrows its language, is open.
 
-## 10. Open questions
+## 10. Decisions (2026-11-20)
 
-- [ ] Does sqmake also build squared and the kits, or only a workspace?
-- [ ] How much comes from the template, and how much is declared?
-- [ ] Do new projects keep plain make until sqmake exists?
-- [ ] Which Lua API is stable for other tools?
-- [ ] The build file's name (`build.lua` is proposed).
+The questions draft 0.1 left open, decided as recommended, and one more:
+
+- [x] **sqmake is independent of sqpg** (and of square): it never reads or
+  runs them, and needs neither to build; §1.
+
+- [x] **sqmake builds the whole workspace**, squared and the kits included:
+  modules are built by their consumer's toolchain (§5.4), so a workspace's
+  build is one graph.
+- [x] **The template gives the layout; `build.lua` declares** the name, the
+  kind and what it depends on (§3.1).
+- [x] **Make stays** until sqmake builds and installs sqterm on the phone.
+- [x] **The Lua API is 0.x**: no stability promised to other tools yet.
+- [x] **The build file is `build.lua`.**
+
+## 11. Phases
+
+1. **The engine** (sqmake 0.1.0): targets, the plan, commands as argument
+   lists, command hashes and dependency files in a state file, a parallel
+   runner, `--explain`, `clean`, build files in Lua 5.4, alone or embedded.
+2. **Toolchains and modules**: `build/toolchain.sh` read, its fingerprint in
+   every hash and BMI folder, `clang-scan-deps` ordering, one std module.
+3. **Conventions**: `project{...}` builds squared, the app and the APK
+   (apkpack).
+4. **The switch**: sqterm built and installed with sqmake, on the phone.
