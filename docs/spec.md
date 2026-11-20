@@ -151,10 +151,18 @@ CI's clang refuse its own std module (sqterm #21, 2026-11-19).
 
 ### 5.1 Order (decided)
 
-Before it compiles, sqmake asks `clang-scan-deps` for each source's module
-dependencies (the P1689 format) and orders the compiles by them: a module's
-interface is compiled before what imports it. sqterm's `llvm` package ships
-`clang-scan-deps` with clang 23.
+Before it compiles, sqmake reads each source's module declarations itself
+(`export module`, `module`, `import`, `export import`, partitions; comments
+and strings skipped) and orders the compiles by them: a module's interface is
+compiled before what imports it, its BMI an input of each importer.
+
+Not clang-scan-deps (changed 2026-11-20, from draft 0.1): it runs the
+compiler inside itself, but the SDK's compilers are toolchain.sh's wrappers,
+whose sysroot, headers and target flags it would not see, so scanning
+squared failed on its headers. The declarations alone need no toolchain and
+are quick on the phone. The limit: a module or import declaration made by a
+macro, or under `#if`, is not seen; squared writes neither. A header unit
+(`import <x>;`) is refused.
 
 ### 5.2 Compiled modules (decided)
 
@@ -271,11 +279,14 @@ The questions draft 0.1 left open, decided as recommended, and one more:
 
 ## 11. Phases
 
-1. **The engine** (sqmake 0.1.0): targets, the plan, commands as argument
+1. **The engine** (sqmake 0.1.0, done): targets, the plan, commands as argument
    lists, command hashes and dependency files in a state file, a parallel
    runner, `--explain`, `clean`, build files in Lua 5.4, alone or embedded.
-2. **Toolchains and modules**: `build/toolchain.sh` read, its fingerprint in
-   every hash and BMI folder, `clang-scan-deps` ordering, one std module.
+2. **Toolchains and modules** (sqmake 0.2.0, done): `toolchain.sdk()` reads
+   `build/toolchain.sh` (its wrappers, fingerprint, std.cppm); the
+   fingerprint is in every command's hash and names the BMI folder; module
+   declarations order the compiles; one std module. Then `sqmake call` and
+   `describe` (the SDK's tool protocol, squared's docs/developer/sdk-tools.md).
 3. **Conventions**: `project{...}` builds squared, the app and the APK
    (apkpack).
 4. **The switch**: sqterm built and installed with sqmake, on the phone.

@@ -116,6 +116,51 @@ ok "a cycle, a missing input, two makers: refused"
 CXX="$CXX -DFROM_CXX=1" "$sqmake" --explain | grep -q -- "-DFROM_CXX=1 -std=c++23" || die "CXX was not split into words"
 ok "CXX in words"
 
+# C++ modules: an interface, its partition, an implementation unit, and a
+# program importing it and std. Built in order; std built once; a change
+# to the partition rebuilds what imports it, not std.
+mkdir -p mods/src
+cat > mods/src/greet.cppm <<'C'
+export module greet;
+export import :words;
+import std;
+export std::string greet(std::string_view who);
+C
+cat > mods/src/words.cppm <<'C'
+export module greet:words;
+import std;
+export inline std::string hello() { return "hello"; }
+C
+cat > mods/src/greet.cpp <<'C'
+module greet;
+import std;
+std::string greet(std::string_view who) { return hello() + ", " + std::string(who); }
+C
+cat > mods/src/main.cpp <<'C'
+// import nothing; is a comment
+import std;
+import greet;
+int main() { std::println("{}", greet("modules")); }
+C
+cat > mods/build.lua <<'L'
+toolchain.cxxflags = {"-std=c++23", "-stdlib=libc++", "-O1"}
+toolchain.ldflags = {"-stdlib=libc++"}
+exe("hello", map(glob("src/*.cpp*"), rules.module))
+L
+"$sqmake" -C mods > out.txt 2>&1 || die "the modules build: $(cat out.txt)"
+[ "$(mods/build/hello)" = "hello, modules" ] || die "the modules program says $(mods/build/hello)"
+order=$(grep -o 'module [a-z:]*\|cxx src/[a-z.]*' out.txt | tr '\n' ',')
+case $order in
+  *"module greet:words"*"module greet,"*"cxx src/greet.cpp"*) ;;
+  *) die "the modules' order: $order" ;;
+esac
+ls mods/build/modules/*/std.pcm mods/build/modules/*/greet.pcm mods/build/modules/*/greet-words.pcm > /dev/null || die "the BMIs are not in build/modules/<fingerprint>/"
+sleep 1
+touch mods/src/words.cppm
+"$sqmake" -C mods > out.txt
+grep -q 'module greet:words' out.txt && grep -q 'module greet ' out.txt && ! grep -q 'module std' out.txt || die "a partition's change rebuilt: $(cat out.txt)"
+ok "modules: built in order, BMIs per fingerprint, std once; a partition's change rebuilds its importers"
+
 "$sqmake" clean > /dev/null
 [ ! -e build/hello ] && [ ! -e build/.sqmake/state ] || die "clean left files"
 ok "clean: outputs and state gone"

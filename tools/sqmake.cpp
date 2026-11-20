@@ -21,7 +21,7 @@ import sqmake.lua;
 
 namespace {
 
-constexpr std::string_view version = "0.1.0";
+constexpr std::string_view version = "0.2.0";
 
 int usage(std::FILE* out = stderr, int status = 2) {
     std::println(out, "usage: sqmake [-C DIR] [-f FILE] [-j N] [--explain] [GOAL...]\n"
@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
     auto plan = graph.plan(goals);
     if (!plan) return fail(plan.error());
     sqmake::State state = sqmake::State::load(state_file);
-    sqmake::Runner runner(graph, state, {.jobs = jobs, .explain = explain});
+    sqmake::Runner runner(graph, state, {.jobs = jobs, .explain = explain, .extra_hash = (*ctx)->fingerprint()});
     auto result = runner.run(*plan);
     if (!result) return fail(result.error());
     if (result->failed) return 1;

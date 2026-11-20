@@ -3,8 +3,8 @@
 The build system of the [squared SDK](https://squared-netizen.github.io/squared-netizen/):
 it builds what a project's `build.lua` describes, on its own.
 
-**Status: phase 1 of 4 built** (sqmake 0.1.0): the engine. Toolchains and
-C++ modules, conventions and building sqterm come next
+**Status: phases 1 and 2 of 4 built** (sqmake 0.2.0): the engine, and C++
+modules with the SDK's toolchain. Conventions and building sqterm come next
 ([docs/spec.md §11](docs/spec.md)).
 
 ```sh
@@ -22,7 +22,16 @@ toolchain.cxxflags = {"-std=c++23", "-O2"}
 exe("hello", map(glob("src/*.cpp"), rules.cxx))
 ```
 
-A target is rebuilt when an output is missing, its command changed, or an
+C++ modules, with the SDK's own toolchain (squared's `build/toolchain.sh`):
+
+```lua
+toolchain.sdk("squared/build/toolchain.sh")   -- clang 23, libc++ 23, bionic
+lib("game", map(glob("src/**/*.cpp*"), rules.module))
+```
+
+Each source's `export module` / `import` lines order the compiles; BMIs go
+in `build/modules/<fingerprint>/`; `import std` builds libc++'s std module
+once. A target is rebuilt when an output is missing, its command changed, or an
 input or a header its last compile read is newer. Commands run as argument
 lists, without a shell, each one's output printed whole.
 

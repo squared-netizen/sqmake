@@ -23,7 +23,7 @@ STD_CPPM     ?= $(if $(filter /%,$(STD_SOURCE)),$(STD_SOURCE),$(if $(STD_SOURCE)
 
 LUA_SRC := $(filter-out third_party/lua/lua.c third_party/lua/luac.c,$(wildcard third_party/lua/*.c))
 LUA_OBJ := $(LUA_SRC:third_party/lua/%.c=$(BUILD)/lua/%.o)
-MODULES := graph state run lua
+MODULES := graph state run scan lua
 OBJS    := $(BUILD)/obj/std.o $(MODULES:%=$(BUILD)/obj/%.o) $(BUILD)/liblua.a
 TESTS   := $(patsubst tests/%.cpp,$(BUILD)/%,$(wildcard tests/test_*.cpp))
 
@@ -51,7 +51,8 @@ endef
 $(eval $(call unit,graph,))
 $(eval $(call unit,state,))
 $(eval $(call unit,run,$(BUILD)/pcm/sqmake.graph.pcm $(BUILD)/pcm/sqmake.state.pcm))
-$(eval $(call unit,lua,$(BUILD)/pcm/sqmake.graph.pcm))
+$(eval $(call unit,scan,))
+$(eval $(call unit,lua,$(BUILD)/pcm/sqmake.graph.pcm $(BUILD)/pcm/sqmake.run.pcm $(BUILD)/pcm/sqmake.scan.pcm))
 
 $(BUILD)/sqmake: tools/sqmake.cpp $(OBJS)
 	$(CXX) $(CXXFLAGS) $< $(OBJS) $(LDFLAGS) -o $@
