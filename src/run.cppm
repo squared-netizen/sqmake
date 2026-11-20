@@ -39,6 +39,7 @@ struct RunOptions {
     bool explain = false;  // print the plan and why, run nothing
     bool quiet = false;    // no progress lines
     std::string extra_hash;  // the toolchain's fingerprint, in every hash
+    std::FILE* out = stdout;  // progress and commands' output (stderr under `call`)
 };
 
 struct RunResult {
@@ -135,11 +136,11 @@ public:
             if (r.status != 0) {
                 ++result.failed;
                 stopped = true;
-                std::print("{}", r.output);
-                std::println("sqmake: {} failed (status {}): {}", t.outputs[0], r.status, quoted(t.command.argv));
+                std::print(o_.out, "{}", r.output);
+                std::println(o_.out, "sqmake: {} failed (status {}): {}", t.outputs[0], r.status, quoted(t.command.argv));
                 return;
             }
-            if (!r.output.empty()) std::print("{}", r.output);
+            if (!r.output.empty()) std::print(o_.out, "{}", r.output);
             Record rec{command_hash(t, o_.extra_hash), {}};
             if (!t.depfile.empty())
                 if (auto deps = read_depfile(t.depfile)) rec.deps = *deps;
@@ -173,13 +174,14 @@ public:
                 }
                 ++counter;
                 if (o_.explain) {
-                    std::println("[{}/{}] {}\n    because {}\n    {}", counter, total, t.description.empty() ? t.outputs[0] : t.description, reason,
+                    ++result.ran;  // with explain: what would run
+                    std::println(o_.out, "[{}/{}] {}\n    because {}\n    {}", counter, total, t.description.empty() ? t.outputs[0] : t.description, reason,
                                  quoted(t.command.argv));
                     done_.insert(i);
                     ran[i] = true;
                     continue;
                 }
-                if (!o_.quiet) std::println("[{}/{}] {}", counter, total, t.description.empty() ? t.outputs[0] : t.description);
+                if (!o_.quiet) std::println(o_.out, "[{}/{}] {}", counter, total, t.description.empty() ? t.outputs[0] : t.description);
                 state_.forget(t.outputs[0]);
                 std::error_code ec;
                 for (const std::string& out : t.outputs)

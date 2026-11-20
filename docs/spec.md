@@ -285,8 +285,9 @@ The questions draft 0.1 left open, decided as recommended, and one more:
 2. **Toolchains and modules** (sqmake 0.2.0, done): `toolchain.sdk()` reads
    `build/toolchain.sh` (its wrappers, fingerprint, std.cppm); the
    fingerprint is in every command's hash and names the BMI folder; module
-   declarations order the compiles; one std module. Then `sqmake call` and
-   `describe` (the SDK's tool protocol, squared's docs/developer/sdk-tools.md).
+   declarations order the compiles; one std module. And `sqmake call` and
+   `describe` (0.3.0, done): the SDK's tool protocol (squared's
+   docs/developer/sdk-tools.md), JSON through sq.data (vendored).
 3. **Conventions**: `project{...}` builds squared, the app and the APK
    (apkpack).
 4. **The switch**: sqterm built and installed with sqmake, on the phone.

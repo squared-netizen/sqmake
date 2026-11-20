@@ -161,6 +161,25 @@ touch mods/src/words.cppm
 grep -q 'module greet:words' out.txt && grep -q 'module greet ' out.txt && ! grep -q 'module std' out.txt || die "a partition's change rebuilt: $(cat out.txt)"
 ok "modules: built in order, BMIs per fingerprint, std once; a partition's change rebuilds its importers"
 
+# sqmake as other tools call it: one JSON request, one JSON response.
+json() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))' "$1"; }
+"$sqmake" describe | json 'd["tool"] + " " + ",".join(sorted(d["commands"]))' | grep -qx 'sqmake build,clean,plan' || die "describe"
+echo '{"sq": 1, "command": "plan", "args": {"dir": "mods"}}' | "$sqmake" call > resp.json || die "call plan: $(cat resp.json)"
+[ "$(json 'len(d["result"]["targets"])' < resp.json)" = 6 ] || die "call plan's targets: $(cat resp.json)"
+touch mods/src/main.cpp
+echo '{"sq": 1, "command": "build", "args": {"dir": "mods", "explain": true}}' | "$sqmake" call 2> /dev/null > resp.json
+[ "$(json 'd["ok"], d["result"]["ran"], d["result"]["explained"]' < resp.json)" = "(True, 2, True)" ] || die "call build, explain: $(cat resp.json)"
+echo '{"sq": 1, "command": "build", "args": {"dir": "mods", "jobs": 2}}' | "$sqmake" call 2> err.txt > resp.json || die "call build: $(cat resp.json)"
+[ "$(json 'd["result"]["ran"]' < resp.json)" = 2 ] && grep -q 'cxx src/main.cpp' err.txt || die "call build: progress on stderr, the response on stdout: $(cat resp.json)"
+for req in '{"sq": 2, "command": "build"}:version:1' '{"sq": 1, "command": "fly"}:unknown_command:1' 'not json:bad_request:2' \
+           '{"sq": 1, "command": "build", "args": {"jobs": "four"}}:bad_request:2'; do
+    body=${req%:*:*}; rest=${req#"$body":}; code=${rest%:*}; want=${rest#*:}
+    status=0
+    echo "$body" | "$sqmake" call > resp.json 2> /dev/null || status=$?
+    [ "$status" = "$want" ] && [ "$(json 'd["error"]["code"]' < resp.json)" = "$code" ] || die "call $body: status $status, $(cat resp.json)"
+done
+ok "call and describe: plan, build (explain), errors with their codes and statuses"
+
 "$sqmake" clean > /dev/null
 [ ! -e build/hello ] && [ ! -e build/.sqmake/state ] || die "clean left files"
 ok "clean: outputs and state gone"
