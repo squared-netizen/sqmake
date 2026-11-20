@@ -3,7 +3,7 @@
 The build system of the [squared SDK](https://squared-netizen.github.io/squared-netizen/):
 it builds what a project's `build.lua` describes, on its own.
 
-**Status: phases 1 and 2 of 4 built** (sqmake 0.2.0): the engine, and C++
+**Status: phases 1 and 2 of 4 built** (sqmake 0.3.0, with `call`): the engine, and C++
 modules with the SDK's toolchain. Conventions and building sqterm come next
 ([docs/spec.md §11](docs/spec.md)).
 
@@ -31,7 +31,17 @@ lib("game", map(glob("src/**/*.cpp*"), rules.module))
 
 Each source's `export module` / `import` lines order the compiles; BMIs go
 in `build/modules/<fingerprint>/`; `import std` builds libc++'s std module
-once. A target is rebuilt when an output is missing, its command changed, or an
+once. Other tools call it as the SDK's tools call each other (squared's
+`docs/developer/sdk-tools.md`): one JSON request, one JSON response.
+
+```sh
+sqmake describe                                     # what it can be asked
+echo '{"sq": 1, "command": "build", "args": {"dir": "game"}}' | sqmake call
+# {"sq": 1, "ok": true, "result": {"ran": 4, "up_to_date": 2, "explained": false}}
+```
+
+`build`, `plan` (every target and its command, in order) and `clean`;
+progress on stderr, the response alone on stdout. A target is rebuilt when an output is missing, its command changed, or an
 input or a header its last compile read is newer. Commands run as argument
 lists, without a shell, each one's output printed whole.
 

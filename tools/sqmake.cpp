@@ -9,6 +9,9 @@
 //                      command that would run and why, and runs nothing.
 //   sqmake clean [-C DIR] [-f FILE]
 //                      every output build.lua names removed, and the state
+//   sqmake call        one JSON request on stdin, one JSON response on
+//                      stdout (squared's docs/developer/sdk-tools.md)
+//   sqmake describe    what `call` can be asked, as JSON
 //   sqmake --help | --version
 
 #include <stdio.h>  // stdout, stderr: macros, not in the std module
@@ -18,14 +21,18 @@ import sqmake.graph;
 import sqmake.state;
 import sqmake.run;
 import sqmake.lua;
+import sqmake.call;
+import sq.data;
 
 namespace {
 
-constexpr std::string_view version = "0.2.0";
+constexpr std::string_view version = sqmake::tool_version;
 
 int usage(std::FILE* out = stderr, int status = 2) {
     std::println(out, "usage: sqmake [-C DIR] [-f FILE] [-j N] [--explain] [GOAL...]\n"
                       "       sqmake clean [-C DIR] [-f FILE]\n"
+                      "       sqmake call < REQUEST.json\n"
+                      "       sqmake describe\n"
                       "       sqmake --help | --version");
     return status;
 }
@@ -43,6 +50,17 @@ int main(int argc, char** argv) {
     if (!args.empty() && (args[0] == "--version" || args[0] == "version")) {
         std::println("sqmake {}", version);
         return 0;
+    }
+    if (!args.empty() && args[0] == "describe") {
+        auto text = sq::data::write_json(sqmake::describe(), {.pretty = true, .newline_at_end = true});
+        std::print("{}", text.text);
+        return text ? 0 : 1;
+    }
+    if (!args.empty() && args[0] == "call") {
+        const std::string request((std::istreambuf_iterator<char>(std::cin)), {});
+        int status = 0;
+        std::print("{}", sqmake::call_text(request, status));
+        return status;
     }
     std::string dir, file = "build.lua";
     std::size_t jobs = std::max(1U, std::thread::hardware_concurrency());
