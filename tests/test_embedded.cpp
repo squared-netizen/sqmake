@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// docs/spec.md §7.2: sqmake in a host's Lua state (as sqpg will use it).
+// docs/spec.md §7.2: sqmake in a host program's Lua state.
 // The host's state is used and left open; the API is in its `sqmake`
 // table; a build file sees none of the host's globals.
 #include <stdio.h>

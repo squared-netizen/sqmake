@@ -1,8 +1,7 @@
 # sqmake
 
 The build system of the [squared SDK](https://squared-netizen.github.io/squared-netizen/):
-it builds an application from a workspace, knowing how to build it rather
-than what a workspace is.
+it builds what a project's `build.lua` describes, on its own.
 
 **Status: phase 1 of 4 built** (sqmake 0.1.0): the engine. Toolchains and
 C++ modules, conventions and building sqterm come next
@@ -44,9 +43,10 @@ lists, without a shell, each one's output printed whole.
 
 ## Where it sits
 
-In the SDK's workflow sqpg creates a workspace, square manages it, and
-sqmake builds it. sqmake asks square what to build (`square build-inputs`)
-and knows nothing about workspaces itself.
+sqmake stands alone. It builds what a project's `build.lua` describes, and
+depends on no other tool of the SDK: it reads nothing of sqpg's or square's
+and runs none of their commands. They, and any other program, may use it
+through its command line or its library; it never uses them.
 
 ## Licence
 

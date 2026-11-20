@@ -3,7 +3,7 @@
 // sqmake.lua: build files in Lua 5.4 (docs/spec.md §3, §7.2).
 //
 //   auto ctx = sqmake::Context::create({});            // its own Lua state
-//   auto ctx = sqmake::Context::create({.lua = {L}});  // the host's (sqpg)
+//   auto ctx = sqmake::Context::create({.lua = {L}});  // a host program's
 //
 // Alone, sqmake makes a state and closes it with the context. Embedded, it
 // uses the host's, never closes it, and puts its API in the host's
