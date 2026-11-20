@@ -1,6 +1,6 @@
 # sqmake: draft specification
 
-**Status: draft 0.1, 2026-11-19.** Nothing here is built yet. What this
+**Status: draft 0.2, 2026-11-20.** Phase 1 (§11) is built. What this
 specification decides is marked as decided; what it only proposes is marked
 as proposed, and the open questions are listed at the end. It grows from the
 research note "sqpg Build System: Research and Recommendations" (2026-11-16)
@@ -246,10 +246,26 @@ auto ctx = sqmake::Context::create({.lua = {L}});    // the host passes one
 - **Full Lua permits unreadable build files.** Whether to narrow the API, as
   Meson narrows its language, is open.
 
-## 10. Open questions
+## 10. Decisions (2026-11-20)
 
-- [ ] Does sqmake also build squared and the kits, or only a workspace?
-- [ ] How much comes from the template, and how much is declared?
-- [ ] Do new projects keep plain make until sqmake exists?
-- [ ] Which Lua API is stable for other tools?
-- [ ] The build file's name (`build.lua` is proposed).
+The questions draft 0.1 left open, decided as recommended:
+
+- [x] **sqmake builds the whole workspace**, squared and the kits included:
+  modules are built by their consumer's toolchain (§5.4), so a workspace's
+  build is one graph.
+- [x] **The template gives the layout; `build.lua` declares** the name, the
+  kind and what it depends on (§3.1).
+- [x] **Make stays** until sqmake builds and installs sqterm on the phone.
+- [x] **The Lua API is 0.x**: no stability promised to other tools yet.
+- [x] **The build file is `build.lua`.**
+
+## 11. Phases
+
+1. **The engine** (sqmake 0.1.0): targets, the plan, commands as argument
+   lists, command hashes and dependency files in a state file, a parallel
+   runner, `--explain`, `clean`, build files in Lua 5.4, alone or embedded.
+2. **Toolchains and modules**: `build/toolchain.sh` read, its fingerprint in
+   every hash and BMI folder, `clang-scan-deps` ordering, one std module.
+3. **Conventions**: `project{...}` builds squared, the app and the APK
+   (apkpack).
+4. **The switch**: sqterm built and installed with sqmake, on the phone.
