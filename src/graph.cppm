@@ -32,7 +32,19 @@ struct Target {
     /// time a goal needs it, attached to the terminal, after the rest of the
     /// plan has finished; it is never up to date and leaves no state.
     bool action = false;
+    /// An action's step done by the host rather than a command (a build
+    /// file's Lua function: verb{call=}); its exit status.
+    std::function<int()> call;
+
+    /// A target with no command and no call: building it builds its inputs.
+    bool alias() const { return command.argv.empty() && !call; }
 };
+
+/// The words every project answers (spec §3.4): what each does is said by a
+/// platform file, a template or the build file, never by sqmake. `clean` is
+/// sqmake's own.
+inline constexpr std::array<std::string_view, 4> verbs{"build", "run", "install", "test"};
+inline bool is_verb(std::string_view name) { return std::ranges::find(verbs, name) != verbs.end(); }
 
 class Graph {
 public:
@@ -82,6 +94,9 @@ public:
         };
         for (const std::string& g : goals) {
             auto m = maker(g);
+            if (!m && is_verb(g))
+                return std::unexpected(std::format("nothing here says what `{}` does: a platform file, the template or the build file "
+                                                   "says so with verb(\"{}\", {{...}})", g, g));
             if (!m) return std::unexpected(std::format("no target makes {} ({})", g, actions_said()));
             if (auto r = visit(*m); !r) return std::unexpected(r.error());
         }
@@ -93,7 +108,7 @@ public:
     std::vector<std::string> actions() const {
         std::vector<std::string> names;
         for (const Target& t : targets_)
-            if (t.action) names.push_back(t.outputs[0]);
+            if (t.action || is_verb(t.outputs[0])) names.push_back(t.outputs[0]);
         std::ranges::sort(names);
         return names;
     }
@@ -102,10 +117,13 @@ private:
     /// For an unknown goal: the actions there are, or that there are none.
     std::string actions_said() const {
         const auto names = actions();
-        if (names.empty()) return "a goal is a file the build makes; this build file has no actions";
-        std::string list;
-        for (const std::string& n : names) list += (list.empty() ? "" : ", ") + n;
-        return "a goal is a file the build makes, or an action: " + list;
+        std::string verbs_here, others;
+        for (const std::string& n : names) (is_verb(n) ? verbs_here : others) += ((is_verb(n) ? verbs_here : others).empty() ? "" : ", ") + n;
+        std::string said = "a goal is a file the build makes";
+        if (!verbs_here.empty()) said += ", a verb (" + verbs_here + ")";
+        if (!others.empty()) said += ", or an action: " + others;
+        if (verbs_here.empty() && others.empty()) said += "; this build file has no verbs or actions";
+        return said;
     }
 
     std::vector<Target> targets_;

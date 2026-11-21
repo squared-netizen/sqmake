@@ -37,7 +37,11 @@ int main() {
         check(ctx.has_value(), "create with the host's state");
         auto loaded = (*ctx)->load(file);
         check(loaded.has_value(), loaded ? "load" : "load: " + loaded.error());
-        check((*ctx)->graph().targets().size() == 1 && (*ctx)->defaults() == std::vector<std::string>{"x"}, "the target and default");
+        // x, and the build verb (its defaults).
+        const auto& g = (*ctx)->graph();
+        check(g.targets().size() == 2 && g.maker("x") && g.maker("build") && g.at(*g.maker("build")).inputs == std::vector<std::string>{"x"} &&
+                  (*ctx)->defaults() == std::vector<std::string>{"x"},
+              "the target, the build verb and the default");
     }
     lua_getglobal(L, "sqmake");
     check(lua_istable(L, -1), "the API in the host's sqmake table");

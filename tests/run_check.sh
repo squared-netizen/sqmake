@@ -375,8 +375,8 @@ mkdir -p act
 cat > act/build.lua <<'L'
 target{out = "build/app.txt", ins = {"build.lua"}, cmd = {"cp", "build.lua", "build/app.txt"}}
 default("build/app.txt")
-action{name = "install", needs = {"build/app.txt"}, desc = "install app.txt",
-       cmds = {{"cp", "build/app.txt", "installed.txt"}, {"sh", "-c", "echo installed $WHERE; read line; echo got $line"}}}
+verb("install", {needs = {"build/app.txt"}, desc = "install app.txt",
+                 cmds = {{"cp", "build/app.txt", "installed.txt"}, {"sh", "-c", "echo installed $WHERE; read line; echo got $line"}}})
 action{name = "broken", cmd = {"false"}}
 L
 (cd act && "$sqmake" > out.txt 2>&1) && [ ! -e act/installed.txt ] || die "an action ran as a default: $(cat act/out.txt)"
@@ -390,9 +390,40 @@ rm act/installed.txt
 grep -q 'broken failed' act/out.txt || die "a failing action's message: $(cat act/out.txt)"
 (cd act && "$sqmake" clean > out.txt 2>&1) && [ ! -e act/build/app.txt ] || die "clean with an action: $(cat act/out.txt)"
 (cd act && "$sqmake" instal > out.txt 2>&1) && die "an unknown goal succeeded"
-grep -q 'no target makes instal (a goal is a file the build makes, or an action: broken, install)' act/out.txt ||
-    die "an unknown goal does not list the actions: $(cat act/out.txt)"
-ok "action{}: after what it needs, each time, attached, never a default or a file; listed for an unknown goal"
+grep -q 'no target makes instal (a goal is a file the build makes, a verb (build, install), or an action: broken)' act/out.txt ||
+    die "an unknown goal does not list the verbs and actions: $(cat act/out.txt)"
+ok "verbs and actions: after what they need, each time, attached, never a default or a file; listed for an unknown goal"
+
+# Verbs: what each does is the build file's (the last to say wins); a verb
+# nothing says is an error naming it; an action may not take a verb's name;
+# call (Lua, given mode) with exec() is the escape hatch, and exec() runs
+# only inside one; --debug is mode.debug, in build/debug unless .sqmake.lua
+# says separate_debug = false.
+mkdir -p vb
+cat > vb/build.lua <<'L'
+target{out = toolchain.build .. "/app.txt", ins = {"build.lua"}, cmd = {"sh", "-c", "echo " .. mode.name .. " > " .. toolchain.build .. "/app.txt"}}
+default(toolchain.build .. "/app.txt")
+verb("run", {cmd = {"echo", "the first run"}})
+verb("run", {needs = {toolchain.build .. "/app.txt"}, call = function(m)
+  if exec{"cat", toolchain.build .. "/app.txt"} ~= 0 then return 1 end
+  return exec("echo", "debug=" .. tostring(m.debug))
+end})
+L
+(cd vb && "$sqmake" run > out.txt 2>&1) && grep -q '^release$' vb/out.txt && grep -q 'debug=false' vb/out.txt &&
+    ! grep -q 'the first run' vb/out.txt || die "a verb's call, the last said: $(cat vb/out.txt)"
+(cd vb && "$sqmake" --debug run > out.txt 2>&1) && grep -q '^debug$' vb/out.txt && grep -q 'debug=true' vb/out.txt &&
+    [ -f vb/build/debug/app.txt ] && [ "$(cat vb/build/app.txt)" = release ] || die "--debug: $(cat vb/out.txt)"
+echo 'separate_debug = false' > vb/.sqmake.lua
+(cd vb && "$sqmake" --debug build > out.txt 2>&1) && [ "$(cat vb/build/app.txt)" = debug ] || die ".sqmake.lua separate_debug = false: $(cat vb/out.txt)"
+(cd vb && "$sqmake" install > out.txt 2>&1) && die "a verb nothing says succeeded"
+grep -q 'nothing here says what `install` does' vb/out.txt || die "an unsaid verb's message: $(cat vb/out.txt)"
+printf 'action{name = "run", cmd = {"true"}}\n' > vb/bad.lua
+(cd vb && "$sqmake" -f bad.lua > out.txt 2>&1) && die "an action took a verb's name"
+grep -q 'run is one of sqmake.s verbs' vb/out.txt || die "an action with a verb's name: $(cat vb/out.txt)"
+printf 'exec{"true"}\n' > vb/bad.lua
+(cd vb && "$sqmake" -f bad.lua > out.txt 2>&1) && die "exec ran while the build file was read"
+grep -q 'exec: only inside a verb' vb/out.txt || die "exec outside a call: $(cat vb/out.txt)"
+ok "verbs: the build file's, the last said wins; call and exec; --debug and .sqmake.lua; unsaid verbs and misuse said"
 
 "$sqmake" clean > /dev/null
 [ ! -e build/hello ] && [ ! -e build/.sqmake/state ] || die "clean left files"

@@ -29,8 +29,9 @@
 //
 // and the prelude's (Lua, below): toolchain, rules.cxx, rules.cc,
 // rules.module (each with a source's own flags), map, lib, exe, and with
-// usage requirements library{}, exe{}, shlib{}, apk{} (apkpack); action{}
-// (a named command, run when asked for); toolchain.sdk(path) for the SDK's own
+// usage requirements library{}, exe{}, shlib{}, apk{} (apkpack); verb()
+// (build, run, install, test: what each does) and action{} (a project's own
+// words), mode (--debug), exec() inside a verb's call; toolchain.sdk(path) for the SDK's own
 // toolchain (squared's build/toolchain.lua, resolved by sqmake.toolchain;
 // an older squared's build/toolchain.sh, through bash).
 //
@@ -59,6 +60,7 @@ namespace sqmake {
 
 constexpr std::string_view prelude = R"lua(
 -- sqmake's prelude: what a build file can use without defining it.
+local verb_names = {build = true, run = true, install = true, test = true}
 -- $CXX and $CC as make takes them: words, so "ccache clang++" or
 -- "clang++ -stdlib=libc++" work.
 local function words(s)
@@ -226,9 +228,45 @@ function shlib(t) return linked(t, "shlib") end
 -- what it needs is built, attached to the terminal. Never a default. What
 -- it does is the build file's: sqmake only runs it.
 function action(t)
-  local name = t.name or error("action: a name")
+  local name = t.name or error("action: a name", 2)
+  if verb_names[name] then
+    error("action: " .. name .. " is one of sqmake's verbs: verb(\"" .. name .. "\", {...}) says what it does", 2)
+  end
   target{out = name, ins = t.needs or {}, cmd = t.cmd, cmds = t.cmds, desc = t.desc or name, action = true}
   return name
+end
+
+-- Verbs (spec §3.4): build, run, install, test, the words every project
+-- answers. sqmake gives them no meaning; a platform file, the template or
+-- the build file says what each does, and the last to say wins:
+--   verb("install", {needs = {apk}, cmd = {tool, "install", apk}})
+--   verb("run", {needs = {apk}, call = function(m) return exec{...} end})
+-- `call` is the escape hatch: a Lua function run when the verb runs, given
+-- mode, with exec() for commands; its status is the verb's. `build` is
+-- the defaults, then its own step if it has one. `clean` is sqmake's.
+-- mode = {debug, name}: `sqmake --debug VERB` (the template says what a
+-- debug build is).
+local said_verbs = {}
+function verb(name, how)
+  if not verb_names[name] then
+    error("verb: " .. tostring(name) .. " is not one of sqmake's verbs (build, run, install, test); "
+          .. "a project's own words are action{}", 2)
+  end
+  if type(how) ~= "table" then error("verb: " .. name .. " takes {needs=, cmd= or cmds= or call=, desc=}", 2) end
+  said_verbs[name] = how
+end
+function _finish_verbs()
+  local b = said_verbs.build or {}
+  local step = b.cmd or b.cmds or b.call
+  target{out = "build", ins = {defaults(), b.needs or {}}, cmd = b.cmd, cmds = b.cmds, call = b.call,
+         desc = b.desc or "build", action = step ~= nil}
+  for _, name in ipairs({"run", "install", "test"}) do
+    local how = said_verbs[name]
+    if how then
+      target{out = name, ins = how.needs or {}, cmd = how.cmd, cmds = how.cmds, call = how.call,
+             desc = how.desc or name, action = true}
+    end
+  end
 end
 
 -- An APK, packed and signed by apkpack (no Java, no Android SDK):
@@ -280,6 +318,13 @@ struct LuaOptions {
 };
 struct Options {
     LuaOptions lua;
+    /// The debug build (`sqmake --debug`): mode.debug for the build file, and
+    /// its own build folder (build/debug) unless .sqmake.lua says
+    /// separate_debug = false.
+    bool debug = false;
+    /// Where exec() and actions write: sqmake's stdout (1), or stderr (2)
+    /// under `call`, whose stdout is the response.
+    int out = 1;
 };
 
 class Context {
@@ -293,11 +338,15 @@ public:
         const lua_Number v = lua_version(c->L_);
         if (v < 504 || v >= 505) return std::unexpected(std::format("Lua {}: sqmake needs Lua 5.4", v));
         if (c->owned_) luaL_openlibs(c->L_);
+        c->debug_ = o.debug;
+        c->out_ = o.out;
         return c;
     }
 
     ~Context() {
         if (!owned_ && L_ && env_ref_ != LUA_NOREF) luaL_unref(L_, LUA_REGISTRYINDEX, env_ref_);
+        if (!owned_ && L_)
+            for (int ref : refs_) luaL_unref(L_, LUA_REGISTRYINDEX, ref);
         if (owned_ && L_) lua_close(L_);
     }
     Context(const Context&) = delete;
@@ -328,6 +377,8 @@ public:
         api("sdk_toolchain", &Context::l_sdk_toolchain);
         api("include", &Context::l_include);
         api("write_file", &Context::l_write_file);
+        api("exec", &Context::l_exec);
+        api("defaults", &Context::l_defaults);
         for (const char* lib : {"string", "table", "math", "utf8"}) {
             lua_getglobal(L, lib);
             lua_setfield(L, env, lib);
@@ -362,6 +413,18 @@ public:
                 lua_settop(L, env - 1);
                 return std::unexpected(why);
             }
+            if (name == "=prelude")
+                if (auto r = set_mode(env, file); !r) {
+                    lua_settop(L, env - 1);
+                    return r;
+                }
+        }
+        // The verbs the build file said, as targets.
+        lua_getfield(L, env, "_finish_verbs");
+        if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            std::string why = lua_tostring(L, -1) ? lua_tostring(L, -1) : "an error";
+            lua_settop(L, env - 1);
+            return std::unexpected(why);
         }
         // The toolchain the build file settled on.
         std::vector<std::string> cxx, cxxflags;
@@ -433,6 +496,17 @@ private:
         lua_getfield(L, 1, "action");
         t.action = lua_toboolean(L, -1) != 0;
         lua_pop(L, 1);
+        // call: a Lua function the action runs (verb{call=}), kept until the
+        // context goes.
+        lua_getfield(L, 1, "call");
+        if (lua_isfunction(L, -1)) {
+            Context* c = &self(L);
+            const int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+            c->refs_.push_back(ref);
+            t.call = [c, ref] { return c->call_ref(ref); };
+        } else {
+            lua_pop(L, 1);
+        }
         // cmds: commands in order, each after the one before succeeded.
         lua_getfield(L, 1, "cmds");
         if (lua_istable(L, -1)) {
@@ -452,6 +526,99 @@ private:
         auto added = self(L).graph_.add(std::move(t));
         if (!added) return luaL_error(L, "target: %s", added.error().c_str());
         return 0;
+    }
+
+    /// mode = {debug, name} for the build file, and the build folder:
+    /// build/debug for a debug build unless .sqmake.lua (values only, beside
+    /// the build file) says separate_debug = false.
+    std::expected<void, std::string> set_mode(int env, const std::filesystem::path& file) {
+        lua_State* L = L_;
+        bool separate = true;
+        const std::filesystem::path config = file.parent_path() / ".sqmake.lua";
+        if (std::filesystem::exists(config)) {
+            if (luaL_loadfilex(L, config.string().c_str(), "t") != LUA_OK) {
+                std::string why = lua_tostring(L, -1);
+                lua_pop(L, 1);
+                return std::unexpected(why);
+            }
+            lua_newtable(L);  // values only: an empty environment
+            lua_pushvalue(L, -1);
+            lua_setupvalue(L, -3, 1);
+            lua_insert(L, -2);
+            if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+                std::string why = lua_tostring(L, -1) ? lua_tostring(L, -1) : "an error";
+                lua_pop(L, 2);
+                return std::unexpected(config.string() + ": " + why);
+            }
+            lua_getfield(L, -1, "separate_debug");
+            if (lua_isboolean(L, -1)) separate = lua_toboolean(L, -1) != 0;
+            else if (!lua_isnil(L, -1)) {
+                lua_pop(L, 2);
+                return std::unexpected(config.string() + ": separate_debug is true or false");
+            }
+            lua_pop(L, 2);
+        }
+        lua_newtable(L);
+        lua_pushboolean(L, debug_);
+        lua_setfield(L, -2, "debug");
+        lua_pushstring(L, debug_ ? "debug" : "release");
+        lua_setfield(L, -2, "name");
+        lua_setfield(L, env, "mode");
+        if (debug_ && separate) {
+            lua_getfield(L, env, "toolchain");
+            lua_pushstring(L, "build/debug");
+            lua_setfield(L, -2, "build");
+            lua_pop(L, 1);
+        }
+        return {};
+    }
+
+    /// Runs a verb's Lua function, given mode: its status (nil or true 0,
+    /// false 1, a number itself; an error 1, said).
+    int call_ref(int ref) {
+        lua_State* L = L_;
+        const int top = lua_gettop(L);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, env_ref_);
+        lua_getfield(L, -1, "mode");
+        lua_remove(L, -2);
+        in_call_ = true;
+        const int r = lua_pcall(L, 1, 1, 0);
+        in_call_ = false;
+        int status = 0;
+        if (r != LUA_OK) {
+            std::println(stderr, "sqmake: {}", lua_tostring(L, -1) ? lua_tostring(L, -1) : "an error");
+            status = 1;
+        } else if (lua_isinteger(L, -1)) {
+            status = static_cast<int>(lua_tointeger(L, -1));
+        } else if (lua_isboolean(L, -1)) {
+            status = lua_toboolean(L, -1) ? 0 : 1;
+        }
+        lua_settop(L, top);
+        return status;
+    }
+
+    /// exec(argv): a command, attached, from a verb's call; its exit status.
+    static int l_exec(lua_State* L) {
+        Context& c = self(L);
+        if (!c.in_call_) return luaL_error(L, "exec: only inside a verb's call (when it runs), not while the build file is read");
+        std::vector<std::string> argv;
+        for (int i = 1; i <= lua_gettop(L); ++i) strings(L, i, argv);
+        if (argv.empty()) return luaL_error(L, "exec: a command");
+        std::fflush(stdout);
+        lua_pushinteger(L, run_attached(argv, c.out_));
+        return 1;
+    }
+
+    /// defaults(): what `sqmake` builds when given no goal, so far.
+    static int l_defaults(lua_State* L) {
+        const auto& d = self(L).defaults_;
+        lua_createtable(L, static_cast<int>(d.size()), 0);
+        for (std::size_t i = 0; i < d.size(); ++i) {
+            lua_pushstring(L, d[i].c_str());
+            lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+        }
+        return 1;
     }
 
     static int l_default(lua_State* L) {
@@ -788,10 +955,14 @@ private:
     std::string fingerprint_;
     lua_State* L_ = nullptr;
     bool owned_ = true;
+    bool debug_ = false;
+    int out_ = 1;
+    bool in_call_ = false;  // exec() runs only inside a verb's call
     int env_ref_ = LUA_NOREF;     // the build file's environment, for include()
     std::vector<std::string> including_;  // the files being included, for a cycle
     Graph graph_;
     std::vector<std::string> defaults_;
+    std::vector<int> refs_;  // verbs' Lua functions, in the registry
     std::string build_dir_ = "build";
     std::string error_;
 };
