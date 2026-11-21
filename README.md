@@ -3,7 +3,7 @@
 The build system of the [squared SDK](https://squared-netizen.github.io/squared-netizen/):
 it builds what a project's `build.lua` describes, on its own.
 
-**Status: phases 1 and 2 of 4 built** (sqmake 0.3.0, with `call`): the engine, and C++
+**Status: phases 1 and 2 of 4 built** (sqmake 0.4.0: `call`, and the toolchain found with no shell): the engine, and C++
 modules with the SDK's toolchain. Conventions and building sqterm come next
 ([docs/spec.md §11](docs/spec.md)).
 
@@ -22,10 +22,11 @@ toolchain.cxxflags = {"-std=c++23", "-O2"}
 exe("hello", map(glob("src/*.cpp"), rules.cxx))
 ```
 
-C++ modules, with the SDK's own toolchain (squared's `build/toolchain.sh`):
+C++ modules, with the SDK's own toolchain (squared's `build/toolchain.lua`,
+data that sqmake resolves itself: no shell, no wrapper scripts):
 
 ```lua
-toolchain.sdk("squared/build/toolchain.sh")   -- clang 23, libc++ 23, bionic
+toolchain.sdk("squared/build/toolchain.lua")  -- clang 23, libc++ 23, bionic
 lib("game", map(glob("src/**/*.cpp*"), rules.module))
 ```
 
@@ -35,6 +36,7 @@ once. Other tools call it as the SDK's tools call each other (squared's
 `docs/developer/sdk-tools.md`): one JSON request, one JSON response.
 
 ```sh
+sqmake toolchain                                    # what it found, where, and why
 sqmake describe                                     # what it can be asked
 echo '{"sq": 1, "command": "build", "args": {"dir": "game"}}' | sqmake call
 # {"sq": 1, "ok": true, "result": {"ran": 4, "up_to_date": 2, "explained": false}}

@@ -22,7 +22,8 @@
 //
 // and the prelude's (Lua, below): toolchain, rules.cxx, rules.cc,
 // rules.module, map, lib, exe; toolchain.sdk(path) for the SDK's own
-// toolchain (squared's build/toolchain.sh).
+// toolchain (squared's build/toolchain.lua, resolved by sqmake.toolchain;
+// an older squared's build/toolchain.sh, through bash).
 //
 // C++ modules (spec §5): rules.module(src) scans the source's declarations
 // (sqmake.scan) at once; when the build file has run, every unit becomes a
@@ -43,6 +44,7 @@ import std;
 import sqmake.graph;
 import sqmake.run;
 import sqmake.scan;
+import sqmake.toolchain;
 
 namespace sqmake {
 
@@ -84,15 +86,17 @@ function rules.module(src)
   module_unit(src, obj)
   return obj
 end
--- The SDK's toolchain (squared's build/toolchain.sh): its wrappers, its
--- fingerprint, its libc++ std.cppm.
-function toolchain.sdk(script)
-  local t = sdk_toolchain(script, toolchain.build)
-  toolchain.cxx = {t.cxx}
-  toolchain.cc = {t.cc}
+-- The SDK's toolchain: squared's build/toolchain.lua, found here by sqmake
+-- itself (no shell), or an older squared's build/toolchain.sh. The
+-- commands carry every flag; its link flags go before the build file's.
+function toolchain.sdk(file)
+  local t = sdk_toolchain(file, toolchain.build)
+  toolchain.cxx = t.cxx
+  toolchain.cc = t.cc
   toolchain.ar = t.ar
   toolchain.fingerprint = t.fingerprint
   toolchain.std_cppm = t.std_cppm
+  if t.ldflags then toolchain.ldflags = {t.ldflags, toolchain.ldflags} end
   return t
 end
 -- A list, each item through f.
@@ -121,6 +125,9 @@ end
 }  // namespace sqmake
 
 export namespace sqmake {
+
+/// A toolchain description (build/toolchain.lua), values only; defined below.
+std::expected<ToolchainDescription, std::string> read_toolchain_description(const std::filesystem::path& file);
 
 struct LuaOptions {
     lua_State* state = nullptr;  // the host's; none: sqmake makes its own
@@ -355,10 +362,46 @@ private:
         return 1;
     }
 
-    /// toolchain.sh env (and wrappers, made once into the build folder):
-    /// {cxx, cc, ar, fingerprint, std_cppm}.
+    /// The SDK's toolchain: {cxx, cc, ar, fingerprint, std_cppm, ldflags}.
+    /// A .lua description is resolved here (sqmake.toolchain); a .sh one,
+    /// an older squared's, is asked with bash, unless a .lua is beside it.
     static int l_sdk_toolchain(lua_State* L) {
-        const std::string script = luaL_checkstring(L, 1), build = luaL_optstring(L, 2, "build");
+        std::string file = luaL_checkstring(L, 1);
+        const std::string build = luaL_optstring(L, 2, "build");
+        if (file.ends_with(".sh")) {
+            const std::string beside = file.substr(0, file.size() - 3) + ".lua";
+            if (std::filesystem::exists(beside)) file = beside;
+        }
+        auto list = [L](const std::vector<std::string>& v) {
+            lua_createtable(L, static_cast<int>(v.size()), 0);
+            for (std::size_t i = 0; i < v.size(); ++i) {
+                lua_pushstring(L, v[i].c_str());
+                lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+            }
+        };
+        if (file.ends_with(".lua")) {
+            auto description = read_toolchain_description(file);
+            if (!description) return luaL_error(L, "%s", description.error().c_str());
+            auto t = resolve_toolchain(*description);
+            if (!t) return luaL_error(L, "toolchain (%s): %s", file.c_str(), t.error().c_str());
+            const std::string dir = std::filesystem::absolute(build).string();
+            if (auto made = make_resource_dir(*t, dir); !made) return luaL_error(L, "toolchain: %s", made.error().c_str());
+            lua_createtable(L, 0, 6);
+            list(t->cxx(dir));
+            lua_setfield(L, -2, "cxx");
+            list(t->cc(dir));
+            lua_setfield(L, -2, "cc");
+            lua_pushstring(L, t->ar().c_str());
+            lua_setfield(L, -2, "ar");
+            lua_pushstring(L, t->fingerprint.c_str());
+            lua_setfield(L, -2, "fingerprint");
+            lua_pushstring(L, t->std_cppm.c_str());
+            lua_setfield(L, -2, "std_cppm");
+            list(t->link);
+            lua_setfield(L, -2, "ldflags");
+            return 1;
+        }
+        const std::string& script = file;
         Ran env = run_command({"bash", script, "env"});
         if (env.status != 0) return luaL_error(L, "%s env: %s", script.c_str(), env.output.c_str());
         std::map<std::string, std::string> v;
@@ -373,9 +416,9 @@ private:
             if (w.status != 0) return luaL_error(L, "%s wrappers: %s", script.c_str(), w.output.c_str());
         }
         lua_createtable(L, 0, 5);
-        lua_pushstring(L, (dir + "/clang++").c_str());
+        list({dir + "/clang++"});
         lua_setfield(L, -2, "cxx");
-        lua_pushstring(L, (dir + "/clang").c_str());
+        list({dir + "/clang"});
         lua_setfield(L, -2, "cc");
         lua_pushstring(L, (v["SQ_LLVM_BIN"] + "/llvm-ar").c_str());
         lua_setfield(L, -2, "ar");
@@ -473,5 +516,94 @@ private:
     std::string build_dir_ = "build";
     std::string error_;
 };
+
+/// A toolchain description (squared's build/toolchain.lua), read as a
+/// settings file is: in a Lua state of its own with nothing in reach, no
+/// functions at all, so it can only say what it says (squared's
+/// docs/developer/sdk-tools.md).
+std::expected<ToolchainDescription, std::string> read_toolchain_description(const std::filesystem::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) return std::unexpected(std::format("cannot read {}", file.string()));
+    const std::string text((std::istreambuf_iterator<char>(in)), {});
+    lua_State* L = luaL_newstate();
+    if (!L) return std::unexpected("cannot make a Lua state");
+    struct Close {
+        lua_State* L;
+        ~Close() { lua_close(L); }
+    } close{L};
+    const std::string name = "@" + file.string();
+    if (luaL_loadbufferx(L, text.data(), text.size(), name.c_str(), "t") != LUA_OK) return std::unexpected(lua_tostring(L, -1));
+    lua_newtable(L);
+    const int values = lua_gettop(L);
+    lua_pushvalue(L, values);
+    lua_setupvalue(L, -3, 1);  // _ENV: an empty table, then what the file sets
+    lua_pushvalue(L, values - 1);
+    if (lua_pcall(L, 0, 0, 0) != LUA_OK) return std::unexpected(lua_tostring(L, -1) ? lua_tostring(L, -1) : "an error");
+    std::string why;
+    auto field = [&](int table, const char* key) {
+        lua_getfield(L, table, key);
+        return lua_gettop(L);
+    };
+    auto text_of = [&](int table, const char* key, bool required) {
+        const int at = field(table, key);
+        std::string out;
+        if (lua_type(L, at) == LUA_TSTRING) out = lua_tostring(L, at);
+        else if (required && why.empty()) why = std::format("{}: {} is not text", file.string(), key);
+        lua_settop(L, at - 1);
+        return out;
+    };
+    auto number_of = [&](int table, const char* key) {
+        const int at = field(table, key);
+        int out = 0;
+        if (lua_isinteger(L, at)) out = static_cast<int>(lua_tointeger(L, at));
+        else if (why.empty()) why = std::format("{}: {} is not a whole number", file.string(), key);
+        lua_settop(L, at - 1);
+        return out;
+    };
+    auto list_of = [&](int table, const char* key) {
+        const int at = field(table, key);
+        std::vector<std::string> out;
+        if (lua_istable(L, at)) {
+            const lua_Integer n = luaL_len(L, at);
+            for (lua_Integer i = 1; i <= n; ++i) {
+                lua_geti(L, at, i);
+                if (lua_type(L, -1) == LUA_TSTRING) out.emplace_back(lua_tostring(L, -1));
+                else if (why.empty()) why = std::format("{}: {}[{}] is not text", file.string(), key, i);
+                lua_pop(L, 1);
+            }
+        } else if (why.empty()) why = std::format("{}: {} is not a list", file.string(), key);
+        lua_settop(L, at - 1);
+        return out;
+    };
+    auto place_of = [&](const char* key) {
+        ToolchainPlace p;
+        const int at = field(values, key);
+        if (!lua_istable(L, at)) {
+            if (why.empty()) why = std::format("{}: {} is not a table", file.string(), key);
+        } else {
+            p.env = text_of(at, "env", true);
+            const int under = field(at, "prefix");
+            if (lua_type(L, under) == LUA_TSTRING) p.under_prefix = lua_tostring(L, under);
+            lua_settop(L, under - 1);
+            p.otherwise = text_of(at, "otherwise", false);
+            p.install = text_of(at, "install", false);
+        }
+        lua_settop(L, at - 1);
+        return p;
+    };
+    ToolchainDescription d;
+    d.clang_major = number_of(values, "clang");
+    d.api = number_of(values, "api");
+    d.api_env = text_of(values, "api_env", false);
+    d.triple = text_of(values, "triple", true);
+    d.flags = list_of(values, "flags");
+    d.cxx_flags = list_of(values, "cxx_flags");
+    d.link_flags = list_of(values, "link_flags");
+    d.llvm_bin = place_of("llvm_bin");
+    d.sysroot = place_of("sysroot");
+    d.runtimes = place_of("runtimes");
+    if (!why.empty()) return std::unexpected(why);
+    return d;
+}
 
 }  // namespace sqmake

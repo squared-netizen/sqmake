@@ -18,7 +18,11 @@ LUAFLAGS := -x c++ -std=c++23 $(STDLIB) $(OPT) -w -DLUA_USE_POSIX
 LDFLAGS  := $(STDLIB) -pthread
 
 STD_MANIFEST := $(shell readlink -f "$$($(CXX) $(STDLIB) -print-library-module-manifest-path 2>/dev/null)" 2>/dev/null)
-STD_SOURCE   := $(if $(STD_MANIFEST),$(shell sed -n 's/.*"source-path": *"\([^"]*std\.cppm\)".*/\1/p' $(STD_MANIFEST) 2>/dev/null | head -n 1))
+comma := ,
+# The std module's source, from libc++'s module manifest (its "source-path"),
+# read with make's own functions: no sed. Set STD_CPPM when it is elsewhere.
+STD_WORDS    := $(if $(wildcard $(STD_MANIFEST)),$(subst ", ,$(subst $(comma), ,$(file < $(STD_MANIFEST)))))
+STD_SOURCE   := $(firstword $(filter %/std.cppm std.cppm,$(STD_WORDS)))
 STD_CPPM     ?= $(if $(filter /%,$(STD_SOURCE)),$(STD_SOURCE),$(if $(STD_SOURCE),$(dir $(STD_MANIFEST))$(STD_SOURCE)))
 
 # squared's data module (sq.data, vendored: tools/vendor_squared_data.sh),
@@ -36,7 +40,7 @@ SQD_OBJS  := $(foreach u,$(SQD_UNITS),$(BUILD)/obj/sq.data/$(call sqd_name,$(u))
 
 LUA_SRC := $(filter-out third_party/lua/lua.c third_party/lua/luac.c,$(wildcard third_party/lua/*.c))
 LUA_OBJ := $(LUA_SRC:third_party/lua/%.c=$(BUILD)/lua/%.o)
-MODULES := graph state run scan lua call
+MODULES := graph state run scan sha256 toolchain lua call
 OBJS    := $(BUILD)/obj/std.o $(MODULES:%=$(BUILD)/obj/%.o) $(BUILD)/liblua.a $(SQD_OBJS) $(BUILD)/obj/yyjson.o
 TESTS   := $(patsubst tests/%.cpp,$(BUILD)/%,$(wildcard tests/test_*.cpp))
 
@@ -87,8 +91,10 @@ $(eval $(call unit,graph,))
 $(eval $(call unit,state,))
 $(eval $(call unit,run,$(BUILD)/pcm/sqmake.graph.pcm $(BUILD)/pcm/sqmake.state.pcm))
 $(eval $(call unit,scan,))
-$(eval $(call unit,lua,$(BUILD)/pcm/sqmake.graph.pcm $(BUILD)/pcm/sqmake.run.pcm $(BUILD)/pcm/sqmake.scan.pcm))
-$(eval $(call unit,call,$(BUILD)/pcm/sqmake.lua.pcm $(BUILD)/pcm/sq.data.pcm))
+$(eval $(call unit,sha256,))
+$(eval $(call unit,toolchain,$(BUILD)/pcm/sqmake.run.pcm $(BUILD)/pcm/sqmake.sha256.pcm))
+$(eval $(call unit,lua,$(BUILD)/pcm/sqmake.graph.pcm $(BUILD)/pcm/sqmake.run.pcm $(BUILD)/pcm/sqmake.scan.pcm $(BUILD)/pcm/sqmake.toolchain.pcm))
+$(eval $(call unit,call,$(BUILD)/pcm/sqmake.lua.pcm $(BUILD)/pcm/sqmake.toolchain.pcm $(BUILD)/pcm/sq.data.pcm))
 
 $(BUILD)/sqmake: tools/sqmake.cpp $(OBJS)
 	$(CXX) $(CXXFLAGS) $< $(OBJS) $(LDFLAGS) -o $@
