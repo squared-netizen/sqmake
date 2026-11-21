@@ -9,6 +9,9 @@
 //                      command that would run and why, and runs nothing.
 //   sqmake clean [-C DIR] [-f FILE]
 //                      every output build.lua names removed, and the state
+//   sqmake toolchain [FILE]
+//                      the SDK's toolchain (FILE: squared/build/toolchain.lua)
+//                      found here: each part, where and why, the fingerprint
 //   sqmake call        one JSON request on stdin, one JSON response on
 //                      stdout (squared's docs/developer/sdk-tools.md)
 //   sqmake describe    what `call` can be asked, as JSON
@@ -22,6 +25,7 @@ import sqmake.state;
 import sqmake.run;
 import sqmake.lua;
 import sqmake.call;
+import sqmake.toolchain;
 import sq.data;
 
 namespace {
@@ -31,6 +35,7 @@ constexpr std::string_view version = sqmake::tool_version;
 int usage(std::FILE* out = stderr, int status = 2) {
     std::println(out, "usage: sqmake [-C DIR] [-f FILE] [-j N] [--explain] [GOAL...]\n"
                       "       sqmake clean [-C DIR] [-f FILE]\n"
+                      "       sqmake toolchain [FILE]\n"
                       "       sqmake call < REQUEST.json\n"
                       "       sqmake describe\n"
                       "       sqmake --help | --version");
@@ -55,6 +60,20 @@ int main(int argc, char** argv) {
         auto text = sq::data::write_json(sqmake::describe(), {.pretty = true, .newline_at_end = true});
         std::print("{}", text.text);
         return text ? 0 : 1;
+    }
+    if (!args.empty() && args[0] == "toolchain") {
+        const std::string file = args.size() > 1 ? std::string(args[1]) : "squared/build/toolchain.lua";
+        auto description = sqmake::read_toolchain_description(file);
+        if (!description) return fail(description.error());
+        auto t = sqmake::resolve_toolchain(*description);
+        if (!t) return fail("toolchain: " + t.error());
+        std::println("  {:<12} {} (clang {}; from {})", "llvm", t->llvm_bin, t->clang_version, t->llvm_bin_from);
+        std::println("  {:<12} {} (from {})", "sysroot", t->sysroot, t->sysroot_from);
+        std::println("  {:<12} {} (libc++ {}; from {})", "runtimes", t->runtimes, t->libcxx_version, t->runtimes_from);
+        std::println("  {:<12} {}", "std.cppm", t->std_cppm.empty() ? "(none: import std cannot be built)" : t->std_cppm);
+        std::println("  {:<12} {}", "target", t->triple);
+        std::println("  {:<12} {}", "fingerprint", t->fingerprint);
+        return 0;
     }
     if (!args.empty() && args[0] == "call") {
         const std::string request((std::istreambuf_iterator<char>(std::cin)), {});

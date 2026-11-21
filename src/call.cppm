@@ -31,12 +31,13 @@ import sqmake.graph;
 import sqmake.state;
 import sqmake.run;
 import sqmake.lua;
+import sqmake.toolchain;
 
 export namespace sqmake {
 
 using sq::data::JsonValue;
 
-inline constexpr std::string_view tool_version = "0.3.0";
+inline constexpr std::string_view tool_version = "0.4.0";
 
 namespace calldetail {
 
@@ -155,6 +156,10 @@ inline JsonValue describe() {
              {"clean", JsonValue(O{{"summary", JsonValue("remove the build file's outputs and the state")},
                                    {"args", JsonValue(O{{"dir", dir}, {"file", file}})},
                                    {"result", JsonValue("{removed}")}})},
+             {"toolchain", JsonValue(O{{"summary", JsonValue("the SDK's toolchain found here: each part, where, and the fingerprint")},
+                                       {"args", JsonValue(O{{"dir", dir},
+                                                            {"file", arg("string", "the description (default: squared/build/toolchain.lua)")}})},
+                                       {"result", JsonValue("{llvm_bin, clang, sysroot, runtimes, libcxx, std_cppm, target, fingerprint, from}")}})},
          })},
     });
 }
@@ -182,8 +187,28 @@ inline JsonValue call(const JsonValue& request) {
     const std::size_t jobs = a.count("jobs", std::max(1U, std::thread::hardware_concurrency()));
     const bool explain = a.boolean("explain", false);
     if (!a.error.empty()) return fail("bad_request", a.error);
+    if (*command == "toolchain") {
+        InDir in(dir);
+        if (!in.ok()) return fail("no_dir", "cannot enter " + dir);
+        auto description = read_toolchain_description(a.string("file", "squared/build/toolchain.lua"));
+        if (!description) return fail("bad_toolchain", description.error());
+        auto t = resolve_toolchain(*description);
+        if (!t) return fail("toolchain_missing", t.error());
+        using O = JsonValue::Object;
+        return ok(JsonValue(O{{"llvm_bin", JsonValue(t->llvm_bin)},
+                              {"clang", JsonValue(t->clang_version)},
+                              {"sysroot", JsonValue(t->sysroot)},
+                              {"runtimes", JsonValue(t->runtimes)},
+                              {"libcxx", JsonValue(t->libcxx_version)},
+                              {"std_cppm", JsonValue(t->std_cppm)},
+                              {"target", JsonValue(t->triple)},
+                              {"fingerprint", JsonValue(t->fingerprint)},
+                              {"from", JsonValue(O{{"llvm_bin", JsonValue(t->llvm_bin_from)},
+                                                   {"sysroot", JsonValue(t->sysroot_from)},
+                                                   {"runtimes", JsonValue(t->runtimes_from)}})}}));
+    }
     if (*command != "build" && *command != "plan" && *command != "clean")
-        return fail("unknown_command", std::format("{}: sqmake's commands are build, plan and clean", *command));
+        return fail("unknown_command", std::format("{}: sqmake's commands are build, plan, clean and toolchain", *command));
 
     InDir in(dir);
     if (!in.ok()) return fail("no_dir", "cannot enter " + dir);

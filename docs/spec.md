@@ -118,9 +118,18 @@ A toolchain is explicit: sqmake never detects compilers. The SDK has one, for
 every C++ module it builds: **clang 23, libc++ 23 and bionic**, from sqterm's
 own `llvm`, `runtimes` and `sysroot` packages on the phone, and from
 apt.llvm.org's clang 23 with the same `sysroot` and `runtimes` on CI. It is
-defined once, in squared (`build/toolchain.mk`, and the same as
-`toolchain.sh` for scripts); sqmake reads that same definition, so squared's
-own build and sqmake can never disagree about it.
+described once, in squared, as data: `build/toolchain.lua` (values only:
+the clang version, the API level, the target, the flags, and where each part
+is). sqmake reads it and finds each part itself (changed 2026-11-21: from
+`toolchain.sh`, run with bash): no shell, no wrapper scripts, and each part
+checked by looking (`std::filesystem`, permission bits) rather than by
+libc's `access()`, which bionic answers wrongly for bash's `[ -x ]`. A part
+not found is named, with where it was looked for and how to get it (`no
+clang and clang++ at ... (set SQ_LLVM_BIN; in sqterm: pkg install llvm)`);
+`sqmake toolchain` prints what it found and why. make's build reads
+`toolchain.sh`, the same toolchain in bash, until make goes (phase 4);
+squared's `tools/check_toolchain.sh` holds the two to the same flags and
+fingerprint.
 
 The Android NDK serves only while the SDK moves to that toolchain (the plan
 "One C++23 toolchain"): until the `sysroot` package carries Android's own
@@ -130,7 +139,11 @@ API headers and stub libraries.
 
 Every toolchain has a **fingerprint**: a short hash of the compiler's
 version, the C++ library's version, the target triple and API level, and
-every flag that changes a compiled module (§4.3). It names the folder that
+every flag that changes a compiled module (§4.3). The SDK's is
+`toolchain.sh`'s, byte for byte (the first 16 hex digits of the SHA-256 of
+five lines: clang's version line, `libc++ <version>`, the flags on every
+compile, the C++ flags, the link flags), so make's build and sqmake's name
+the same BMI folders. It names the folder that
 holds compiled modules (§5.2), and it is part of every command's hash (§2.2).
 
 ### 4.3 Flags that change a compiled module (decided)
@@ -157,8 +170,8 @@ and strings skipped) and orders the compiles by them: a module's interface is
 compiled before what imports it, its BMI an input of each importer.
 
 Not clang-scan-deps (changed 2026-11-20, from draft 0.1): it runs the
-compiler inside itself, but the SDK's compilers are toolchain.sh's wrappers,
-whose sysroot, headers and target flags it would not see, so scanning
+compiler inside itself, but the SDK's compilers were toolchain.sh's
+wrappers, whose sysroot, headers and target flags it would not see, so scanning
 squared failed on its headers. The declarations alone need no toolchain and
 are quick on the phone. The limit: a module or import declaration made by a
 macro, or under `#if`, is not seen; squared writes neither. A header unit
@@ -283,7 +296,8 @@ The questions draft 0.1 left open, decided as recommended, and one more:
    lists, command hashes and dependency files in a state file, a parallel
    runner, `--explain`, `clean`, build files in Lua 5.4, alone or embedded.
 2. **Toolchains and modules** (sqmake 0.2.0, done): `toolchain.sdk()` reads
-   `build/toolchain.sh` (its wrappers, fingerprint, std.cppm); the
+   `build/toolchain.sh` (its wrappers, fingerprint, std.cppm), and from
+   0.4.0 `build/toolchain.lua`, found with no shell (§4.1); the
    fingerprint is in every command's hash and names the BMI folder; module
    declarations order the compiles; one std module. And `sqmake call` and
    `describe` (0.3.0, done): the SDK's tool protocol (squared's

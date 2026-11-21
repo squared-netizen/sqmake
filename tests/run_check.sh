@@ -11,6 +11,9 @@
 #   a failure      the build stops, the status is not 0, the output shown;
 #                  fixed, it builds
 #   a cycle, a missing input, a second maker: refused before anything runs
+#   the toolchain  build/toolchain.lua found with no shell: a fake layout
+#                  (a stub clang), the fingerprint toolchain.sh would give,
+#                  each part's errors, values only
 #   clean          the outputs and the state gone
 #
 # CXX is the compiler (clang++ by default).
@@ -163,7 +166,7 @@ ok "modules: built in order, BMIs per fingerprint, std once; a partition's chang
 
 # sqmake as other tools call it: one JSON request, one JSON response.
 json() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))' "$1"; }
-"$sqmake" describe | json 'd["tool"] + " " + ",".join(sorted(d["commands"]))' | grep -qx 'sqmake build,clean,plan' || die "describe"
+"$sqmake" describe | json 'd["tool"] + " " + ",".join(sorted(d["commands"]))' | grep -qx 'sqmake build,clean,plan,toolchain' || die "describe"
 echo '{"sq": 1, "command": "plan", "args": {"dir": "mods"}}' | "$sqmake" call > resp.json || die "call plan: $(cat resp.json)"
 [ "$(json 'len(d["result"]["targets"])' < resp.json)" = 6 ] || die "call plan's targets: $(cat resp.json)"
 touch mods/src/main.cpp
@@ -179,6 +182,58 @@ for req in '{"sq": 2, "command": "build"}:version:1' '{"sq": 1, "command": "fly"
     [ "$status" = "$want" ] && [ "$(json 'd["error"]["code"]' < resp.json)" = "$code" ] || die "call $body: status $status, $(cat resp.json)"
 done
 ok "call and describe: plan, build (explain), errors with their codes and statuses"
+
+# The SDK's toolchain from its description, found by sqmake alone: a fake
+# layout (a stub clang that only answers for its version), and the
+# fingerprint build/toolchain.sh makes of the same five lines.
+mkdir -p tc/bin tc/pfx/share/sysroot/usr/include tc/pfx/lib/aarch64-unknown-linux-android28 \
+         tc/pfx/include/c++/v1 tc/pfx/share/libc++/v1
+cat > tc/bin/clang <<'SH'
+#!/bin/sh
+case $1 in -dumpversion) echo "${FAKE_CLANG:-23}.1.5" ;; --version) echo "clang version ${FAKE_CLANG:-23}.1.5 (fake)"; echo "Target: x" ;; esac
+SH
+chmod +x tc/bin/clang && cp tc/bin/clang tc/bin/clang++
+: > tc/pfx/lib/aarch64-unknown-linux-android28/libc++.a
+printf '#ifndef _LIBCPP_CONFIG\n#  define _LIBCPP_VERSION 230105\n#endif\n' > tc/pfx/include/c++/v1/__config
+: > tc/pfx/share/libc++/v1/std.cppm
+cat > tc/toolchain.lua <<'L'
+clang = 23
+api = 28
+api_env = "SQ_API"
+triple = "aarch64-unknown-linux-android"
+flags = {"-rtlib=compiler-rt", "-unwindlib=libunwind", "-pthread", "-D__BIONIC_CTYPE_INLINE=inline"}
+cxx_flags = {"-std=c++23", "-stdlib=libc++", "-nostdinc++"}
+link_flags = {"-fuse-ld=lld", "-static-libstdc++", "-Wl,-z,max-page-size=16384"}
+llvm_bin = {env = "SQ_LLVM_BIN", prefix = "bin", otherwise = "/usr/lib/llvm-23/bin", install = "pkg install llvm"}
+sysroot = {env = "SQ_SYSROOT", prefix = "share/sysroot", install = "pkg install sysroot"}
+runtimes = {env = "SQ_RUNTIMES", prefix = "", install = "pkg install runtimes"}
+L
+pfx=$PWD/tc/pfx
+cp tc/bin/clang tc/bin/clang++ "$pfx/share/" && mkdir -p "$pfx/bin" && cp tc/bin/clang tc/bin/clang++ "$pfx/bin/"
+want=$(printf '%s\n' "clang version 23.1.5 (fake)" "libc++ 230105" \
+    "--target=aarch64-unknown-linux-android28 -rtlib=compiler-rt -unwindlib=libunwind -pthread -D__BIONIC_CTYPE_INLINE=inline" \
+    "-std=c++23 -stdlib=libc++ -nostdinc++" "-fuse-ld=lld -static-libstdc++ -Wl,-z,max-page-size=16384" | sha256sum | cut -c 1-16)
+env -u SQ_LLVM_BIN -u SQ_SYSROOT -u SQ_RUNTIMES PREFIX="$pfx" "$sqmake" toolchain tc/toolchain.lua > out.txt 2>&1 || die "toolchain: $(cat out.txt)"
+grep -q "fingerprint  $want" out.txt && grep -q "llvm .*$pfx/bin (clang 23.1.5; from \$PREFIX)" out.txt &&
+    grep -q "libc++ 230105" out.txt || die "toolchain, under \$PREFIX: $(cat out.txt) (want $want)"
+SQ_LLVM_BIN=$PWD/tc/bin PREFIX="$pfx" "$sqmake" toolchain tc/toolchain.lua | grep -q "tc/bin (clang 23.1.5; from SQ_LLVM_BIN)" ||
+    die "toolchain: SQ_LLVM_BIN does not win"
+echo '{"sq": 1, "command": "toolchain", "args": {"file": "tc/toolchain.lua"}}' | PREFIX="$pfx" "$sqmake" call > resp.json
+[ "$(json 'd["result"]["fingerprint"], d["result"]["target"]' < resp.json)" = "('$want', 'aarch64-unknown-linux-android28')" ] ||
+    die "call toolchain: $(cat resp.json)"
+SQ_API=30 PREFIX="$pfx" "$sqmake" toolchain tc/toolchain.lua > out.txt 2>&1 && die "SQ_API=30 found libc++ for 28"
+grep -q 'no libc++ for aarch64-unknown-linux-android30' out.txt || die "SQ_API=30: $(cat out.txt)"
+FAKE_CLANG=22 PREFIX="$pfx" "$sqmake" toolchain tc/toolchain.lua > out.txt 2>&1 && die "clang 22 accepted"
+grep -q 'clang 22.1.5 at .*: the toolchain is clang 23' out.txt || die "clang 22: $(cat out.txt)"
+SQ_SYSROOT=$PWD/none PREFIX="$pfx" "$sqmake" toolchain tc/toolchain.lua > out.txt 2>&1 && die "a missing sysroot accepted"
+grep -q 'no sysroot at .*none .*pkg install sysroot' out.txt || die "no sysroot: $(cat out.txt)"
+env -u PREFIX SQ_LLVM_BIN=$PWD/none "$sqmake" toolchain tc/toolchain.lua > out.txt 2>&1 && die "no clang accepted"
+grep -q 'no clang and clang++ at .*none .*pkg install llvm' out.txt || die "no clang: $(cat out.txt)"
+# Values only: a description that calls anything fails.
+printf 'clang = tonumber("23")\n' > tc/bad.lua
+"$sqmake" toolchain tc/bad.lua > out.txt 2>&1 && die "a description could call a function"
+grep -q "tonumber" out.txt || die "values only: $(cat out.txt)"
+ok "toolchain: found under \$PREFIX or its variables, toolchain.sh's fingerprint, every part's error, values only"
 
 "$sqmake" clean > /dev/null
 [ ! -e build/hello ] && [ ! -e build/.sqmake/state ] || die "clean left files"
