@@ -389,7 +389,10 @@ rm act/installed.txt
 (cd act && "$sqmake" broken > out.txt 2>&1) && die "a failing action succeeded"
 grep -q 'broken failed' act/out.txt || die "a failing action's message: $(cat act/out.txt)"
 (cd act && "$sqmake" clean > out.txt 2>&1) && [ ! -e act/build/app.txt ] || die "clean with an action: $(cat act/out.txt)"
-ok "action{}: after what it needs, each time, attached, never a default or a file"
+(cd act && "$sqmake" instal > out.txt 2>&1) && die "an unknown goal succeeded"
+grep -q 'no target makes instal (a goal is a file the build makes, or an action: broken, install)' act/out.txt ||
+    die "an unknown goal does not list the actions: $(cat act/out.txt)"
+ok "action{}: after what it needs, each time, attached, never a default or a file; listed for an unknown goal"
 
 "$sqmake" clean > /dev/null
 [ ! -e build/hello ] && [ ! -e build/.sqmake/state ] || die "clean left files"
