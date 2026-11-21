@@ -82,13 +82,32 @@ public:
         };
         for (const std::string& g : goals) {
             auto m = maker(g);
-            if (!m) return std::unexpected(std::format("no target makes {}", g));
+            if (!m) return std::unexpected(std::format("no target makes {} ({})", g, actions_said()));
             if (auto r = visit(*m); !r) return std::unexpected(r.error());
         }
         return order;
     }
 
+    /// The build file's actions, sorted: what `sqmake NAME` can be besides
+    /// a file.
+    std::vector<std::string> actions() const {
+        std::vector<std::string> names;
+        for (const Target& t : targets_)
+            if (t.action) names.push_back(t.outputs[0]);
+        std::ranges::sort(names);
+        return names;
+    }
+
 private:
+    /// For an unknown goal: the actions there are, or that there are none.
+    std::string actions_said() const {
+        const auto names = actions();
+        if (names.empty()) return "a goal is a file the build makes; this build file has no actions";
+        std::string list;
+        for (const std::string& n : names) list += (list.empty() ? "" : ", ") + n;
+        return "a goal is a file the build makes, or an action: " + list;
+    }
+
     std::vector<Target> targets_;
     std::unordered_map<std::string, std::size_t> by_output_;
 };
