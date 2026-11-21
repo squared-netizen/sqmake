@@ -114,7 +114,7 @@ int main(int argc, char** argv) {
     if (clean) {
         std::size_t removed = 0;
         for (const sqmake::Target& t : graph.targets()) {
-            if (t.command.argv.empty()) continue;
+            if (t.command.argv.empty() || t.action) continue;  // an action's name is no file
             for (const std::string& o : t.outputs) removed += std::filesystem::remove(o, ec) ? 1 : 0;
             if (!t.depfile.empty()) std::filesystem::remove(t.depfile, ec);
         }

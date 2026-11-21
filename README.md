@@ -37,8 +37,10 @@ in a file a template's build includes:
 local greet = library{name = "greet", srcs = glob("greet/src/*.cpp"),
                       public = {flags = {"-Igreet/include"}}}
 local so = shlib{name = "game", srcs = glob("src/*.cpp"), deps = {greet}}
-apk{name = "game", manifest = "sq_android/AndroidManifest.xml", res = "sq_android/res",
-    assets = "sq_android/assets", files = {{"lib/arm64-v8a/libgame.so", so}}}
+local game = apk{name = "game", manifest = "sq_android/AndroidManifest.xml", res = "sq_android/res",
+                 assets = "sq_android/assets", files = {{"lib/arm64-v8a/libgame.so", so}}}
+-- `sqmake install`: built first, then this command, attached to the terminal.
+action{name = "install", needs = {game}, cmd = {"mydevicetool", "install", game}}
 ```
 
 Each source's `export module` / `import` lines order the compiles; BMIs go

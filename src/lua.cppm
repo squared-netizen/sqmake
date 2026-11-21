@@ -29,7 +29,8 @@
 //
 // and the prelude's (Lua, below): toolchain, rules.cxx, rules.cc,
 // rules.module (each with a source's own flags), map, lib, exe, and with
-// usage requirements library{}, exe{}, shlib{}, apk{} (apkpack); toolchain.sdk(path) for the SDK's own
+// usage requirements library{}, exe{}, shlib{}, apk{} (apkpack); action{}
+// (a named command, run when asked for); toolchain.sdk(path) for the SDK's own
 // toolchain (squared's build/toolchain.lua, resolved by sqmake.toolchain;
 // an older squared's build/toolchain.sh, through bash).
 //
@@ -219,6 +220,16 @@ end
 -- shlib{name=, srcs=, objs=, flags=, deps=, link=, out=, after=}: libNAME.so (an
 -- Android app's native library); built by default.
 function shlib(t) return linked(t, "shlib") end
+
+-- action{name=, needs={...}, cmd={...} or cmds={{...}, ...}, desc=}: a
+-- named command (`sqmake install`), run each time a goal names it, after
+-- what it needs is built, attached to the terminal. Never a default. What
+-- it does is the build file's: sqmake only runs it.
+function action(t)
+  local name = t.name or error("action: a name")
+  target{out = name, ins = t.needs or {}, cmd = t.cmd, cmds = t.cmds, desc = t.desc or name, action = true}
+  return name
+end
 
 -- An APK, packed and signed by apkpack (no Java, no Android SDK):
 --   apk{name=, manifest=, res=, assets=, min_sdk=, target_sdk=,
@@ -419,6 +430,9 @@ private:
         if (lua_isstring(L, -1)) t.depfile = lua_tostring(L, -1);
         lua_getfield(L, 1, "desc");
         if (lua_isstring(L, -1)) t.description = lua_tostring(L, -1);
+        lua_getfield(L, 1, "action");
+        t.action = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
         // cmds: commands in order, each after the one before succeeded.
         lua_getfield(L, 1, "cmds");
         if (lua_istable(L, -1)) {

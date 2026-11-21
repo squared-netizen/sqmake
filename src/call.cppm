@@ -37,7 +37,7 @@ export namespace sqmake {
 
 using sq::data::JsonValue;
 
-inline constexpr std::string_view tool_version = "0.6.0";
+inline constexpr std::string_view tool_version = "0.7.0";
 
 namespace calldetail {
 
@@ -152,7 +152,7 @@ inline JsonValue describe() {
                                    {"result", JsonValue("{ran, up_to_date, explained}")}})},
              {"plan", JsonValue(O{{"summary", JsonValue("the targets a build needs, in order, with their commands")},
                                   {"args", JsonValue(O{{"dir", dir}, {"file", file}, {"goals", goals}})},
-                                  {"result", JsonValue("{targets: [{outputs, inputs, command, description}]}")}})},
+                                  {"result", JsonValue("{targets: [{outputs, inputs, command, description, action}]}")}})},
              {"clean", JsonValue(O{{"summary", JsonValue("remove the build file's outputs and the state")},
                                    {"args", JsonValue(O{{"dir", dir}, {"file", file}})},
                                    {"result", JsonValue("{removed}")}})},
@@ -222,7 +222,7 @@ inline JsonValue call(const JsonValue& request) {
         std::error_code ec;
         std::int64_t removed = 0;
         for (const Target& t : graph.targets()) {
-            if (t.command.argv.empty()) continue;
+            if (t.command.argv.empty() || t.action) continue;  // an action's name is no file
             for (const std::string& o : t.outputs) removed += std::filesystem::remove(o, ec) ? 1 : 0;
             if (!t.depfile.empty()) std::filesystem::remove(t.depfile, ec);
         }
@@ -240,7 +240,8 @@ inline JsonValue call(const JsonValue& request) {
             targets.emplace_back(JsonValue::Object{{"outputs", strings_json(t.outputs)},
                                                    {"inputs", strings_json(t.inputs)},
                                                    {"command", strings_json(t.command.argv)},
-                                                   {"description", JsonValue(t.description)}});
+                                                   {"description", JsonValue(t.description)},
+                                                   {"action", JsonValue(t.action)}});
         }
         return ok(JsonValue(JsonValue::Object{{"targets", JsonValue(std::move(targets))}}));
     }

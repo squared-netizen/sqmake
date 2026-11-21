@@ -368,6 +368,29 @@ L
 [ "$(gen/build/hello)" = "generated" ] || die "a generated source's program says $(gen/build/hello)"
 ok "a generated source and header: generated first, its imports given"
 
+# action{}: a named command (install, run), after what it needs is built,
+# every time it is asked for, attached to the terminal (its stdin is
+# sqmake's), never a default, never a file clean removes; a failure fails.
+mkdir -p act
+cat > act/build.lua <<'L'
+target{out = "build/app.txt", ins = {"build.lua"}, cmd = {"cp", "build.lua", "build/app.txt"}}
+default("build/app.txt")
+action{name = "install", needs = {"build/app.txt"}, desc = "install app.txt",
+       cmds = {{"cp", "build/app.txt", "installed.txt"}, {"sh", "-c", "echo installed $WHERE; read line; echo got $line"}}}
+action{name = "broken", cmd = {"false"}}
+L
+(cd act && "$sqmake" > out.txt 2>&1) && [ ! -e act/installed.txt ] || die "an action ran as a default: $(cat act/out.txt)"
+(cd act && echo yes | WHERE=here "$sqmake" install > out.txt 2>&1) || die "the install action: $(cat act/out.txt)"
+grep -q 'installed here' act/out.txt && grep -q 'got yes' act/out.txt && [ -f act/installed.txt ] ||
+    die "the install action's output, environment or stdin: $(cat act/out.txt)"
+rm act/installed.txt
+(cd act && echo no | "$sqmake" install > out.txt 2>&1) && [ -f act/installed.txt ] && ! grep -q 'cp build.lua' act/out.txt ||
+    die "an action again (once more, with nothing to build): $(cat act/out.txt)"
+(cd act && "$sqmake" broken > out.txt 2>&1) && die "a failing action succeeded"
+grep -q 'broken failed' act/out.txt || die "a failing action's message: $(cat act/out.txt)"
+(cd act && "$sqmake" clean > out.txt 2>&1) && [ ! -e act/build/app.txt ] || die "clean with an action: $(cat act/out.txt)"
+ok "action{}: after what it needs, each time, attached, never a default or a file"
+
 "$sqmake" clean > /dev/null
 [ ! -e build/hello ] && [ ! -e build/.sqmake/state ] || die "clean left files"
 ok "clean: outputs and state gone"
