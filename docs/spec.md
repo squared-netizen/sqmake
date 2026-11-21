@@ -106,6 +106,15 @@ include("sq/build/template.lua")
   (`sysroot`, `runtimes`, `llvm_bin`, `target`), for what a build file names
   by path: Android's libraries in the sysroot, llvm-objcopy.
 
+- `action{name, needs, cmd | cmds, desc}` (0.7.0): a named command,
+  `sqmake install`, run each time a goal names it, once what it needs is
+  built and nothing else is running, attached to the terminal (its stdin,
+  its output as it comes: a log followed until interrupted works). Never a
+  default, never up to date, no state; `clean` leaves its name alone. What
+  an action does is the build file's: sqmake knows no devices, installers
+  or platforms, so an Android template's `install` names its own tool, and
+  another platform's names another.
+
 A generator's output (0.6.0): a source written as `{path, imports = {...}}`
 is one a target makes, its imports given because it cannot be read while
 the build file runs; `after = {...}` on `library{}`, `exe{}` or `shlib{}`

@@ -93,6 +93,29 @@ inline Ran run_command(const std::vector<std::string>& argv) {
     return r;
 }
 
+/// Runs argv without a shell, attached: its stdin and stderr are sqmake's,
+/// its stdout `out` (sqmake's stdout, or stderr under `call`). For actions,
+/// which may ask, or never end (a log followed until interrupted).
+inline int run_attached(const std::vector<std::string>& argv, int out) {
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    if (out != 1) posix_spawn_file_actions_adddup2(&actions, out, 1);
+    std::vector<char*> args;
+    for (const std::string& a : argv) args.push_back(const_cast<char*>(a.c_str()));
+    args.push_back(nullptr);
+    pid_t pid = 0;
+    const int err = ::posix_spawnp(&pid, args[0], &actions, nullptr, args.data(), environ);
+    posix_spawn_file_actions_destroy(&actions);
+    if (err != 0) {
+        std::println(stderr, "sqmake: cannot run {}: {}", argv[0], std::strerror(err));
+        return 127;
+    }
+    int status = 0;
+    while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+    }
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + (WIFSIGNALED(status) ? WTERMSIG(status) : 0);
+}
+
 class Runner {
 public:
     Runner(const Graph& graph, State& state, RunOptions options) : graph_(graph), state_(state), o_(std::move(options)) {}
@@ -159,6 +182,13 @@ public:
                     ++it;
                     continue;
                 }
+                // An action waits until nothing runs and only actions are left:
+                // it has the terminal to itself.
+                if (graph_.at(i).action && !o_.explain &&
+                    (running > 0 || std::ranges::any_of(pending, [&](std::size_t p) { return !graph_.at(p).action; }))) {
+                    ++it;
+                    continue;
+                }
                 it = pending.erase(it);
                 const Target& t = graph_.at(i);
                 const std::string reason = out_of_date(i, ran);
@@ -170,6 +200,27 @@ public:
                 if (t.command.argv.empty()) {  // an alias: its inputs are its work
                     done_.insert(i);
                     ran[i] = true;
+                    continue;
+                }
+                if (t.action && !o_.explain) {
+                    ++counter;
+                    if (!o_.quiet) std::println(o_.out, "[{}/{}] {}", counter, total, t.description.empty() ? t.outputs[0] : t.description);
+                    std::fflush(o_.out);
+                    int status = run_attached(t.command.argv, ::fileno(o_.out));
+                    for (const auto& next : t.command.then) {
+                        if (status != 0) break;
+                        status = run_attached(next, ::fileno(o_.out));
+                    }
+                    if (status != 0) {
+                        ++result.failed;
+                        stopped = true;
+                        std::println(o_.out, "sqmake: {} failed (status {}): {}", t.outputs[0], status, quoted(t.command.argv));
+                        break;
+                    }
+                    ++result.ran;
+                    done_.insert(i);
+                    ran[i] = true;
+                    it = pending.begin();
                     continue;
                 }
                 ++counter;
@@ -225,6 +276,7 @@ private:
     /// Why target i must be built, or "" when it is up to date.
     std::string out_of_date(std::size_t i, const std::map<std::size_t, bool>& ran) const {
         const Target& t = graph_.at(i);
+        if (t.action) return "it is an action: it runs whenever asked for";
         if (t.command.argv.empty()) {
             for (const std::string& in : t.inputs)
                 if (auto m = graph_.maker(in); m && ran.contains(*m)) return "an input was built";

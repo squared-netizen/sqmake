@@ -5,7 +5,8 @@
 // A target is the files one command makes from its inputs. Inputs are
 // files, or the outputs of other targets; a command is an argument list,
 // run without a shell. A target with no command is an alias: building it
-// builds its inputs. The plan is every target a goal needs, inputs before
+// builds its inputs. An action is a named command run whenever asked for
+// (install, run): what it does is the build file's, not sqmake's. The plan is every target a goal needs, inputs before
 // what is made from them; a cycle is refused, naming it.
 
 export module sqmake.graph;
@@ -27,6 +28,10 @@ struct Target {
     Command command;
     std::string depfile;      // written by the command (-MMD -MF): more inputs
     std::string description;  // what the progress line says: "cxx src/a.cpp"
+    /// An action (install, run): a name, not a file. Its command runs each
+    /// time a goal needs it, attached to the terminal, after the rest of the
+    /// plan has finished; it is never up to date and leaves no state.
+    bool action = false;
 };
 
 class Graph {
