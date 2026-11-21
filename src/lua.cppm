@@ -76,23 +76,25 @@ toolchain = {
 rules = {}
 -- A C++ source compiled to an object; its headers found by -MMD.
 -- flags: the source's own (a library's include folders and defines).
-function rules.cxx(src, flags)
+function rules.cxx(src, flags, opts)
   local obj = toolchain.build .. "/obj/" .. src .. ".o"
-  target{out = obj, ins = {src}, depfile = obj .. ".d", desc = "cxx " .. src,
+  target{out = obj, ins = {src, (opts or {}).after or {}}, depfile = obj .. ".d", desc = "cxx " .. src,
          cmd = {toolchain.cxx, toolchain.cxxflags, flags or {}, "-MMD", "-MF", obj .. ".d", "-c", src, "-o", obj}}
   return obj
 end
-function rules.cc(src, flags)
+function rules.cc(src, flags, opts)
   local obj = toolchain.build .. "/obj/" .. src .. ".o"
-  target{out = obj, ins = {src}, depfile = obj .. ".d", desc = "cc " .. src,
+  target{out = obj, ins = {src, (opts or {}).after or {}}, depfile = obj .. ".d", desc = "cc " .. src,
          cmd = {toolchain.cc, toolchain.cflags, flags or {}, "-MMD", "-MF", obj .. ".d", "-c", src, "-o", obj}}
   return obj
 end
 -- A C++ source that is, or imports, a module: scanned now, its target
 -- made when the build file has run (inputs: the BMIs it imports).
-function rules.module(src, flags)
+-- opts: after = files it waits for (generated headers); imports = its
+-- imports, for a generated source (not there yet to scan).
+function rules.module(src, flags, opts)
   local obj = toolchain.build .. "/obj/" .. src .. ".o"
-  module_unit(src, obj, flags or {})
+  module_unit(src, obj, flags or {}, opts or {})
   return obj
 end
 -- The SDK's toolchain: squared's build/toolchain.lua, found here by sqmake
@@ -168,18 +170,27 @@ local function needs(deps)
   return once(flags), once(archives, true), once(link)
 end
 -- A source by its kind: C, or C++ (a module unit or not: scanned either way).
-local function compile(src, flags)
-  if src:match("%.c$") then return rules.cc(src, flags) end
-  return rules.module(src, flags)
+-- A source is a path, or {path, imports = {...}} for one a target generates
+-- (its imports given, as it cannot be read yet). after: what every compile
+-- waits for (the generator's headers).
+local function compile(src, flags, after)
+  local opts = {after = after}
+  if type(src) == "table" then
+    opts.imports = src.imports or {}
+    src = src[1]
+  end
+  if src:match("%.c$") then return rules.cc(src, flags, opts) end
+  return rules.module(src, flags, opts)
 end
 -- library{name=, srcs={...}, flags={...}, public={flags={...}, link={...}},
--- deps={other libraries}}: libNAME.a, and what a user of it needs.
+-- deps={other libraries}, after={generated files}}: libNAME.a, and what a
+-- user of it needs.
 function library(t)
   local public = t.public or {}
   local dflags, darchives, dlink = needs(t.deps)
   local own = {t.flags or {}, public.flags or {}, dflags}
   local objs = {t.objs or {}}
-  for _, src in ipairs(t.srcs or {}) do objs[#objs + 1] = compile(src, own) end
+  for _, src in ipairs(t.srcs or {}) do objs[#objs + 1] = compile(src, own, flat({t.after or {}})) end
   local out = lib(t.name, objs)
   return {name = t.name, out = out,
           public_flags = {public.flags or {}, dflags},
@@ -191,7 +202,7 @@ end
 function linked(t, kind)
   local dflags, darchives, dlink = needs(t.deps)
   local objs = {t.objs or {}}
-  for _, src in ipairs(t.srcs or {}) do objs[#objs + 1] = compile(src, {t.flags or {}, dflags}) end
+  for _, src in ipairs(t.srcs or {}) do objs[#objs + 1] = compile(src, {t.flags or {}, dflags}, flat({t.after or {}})) end
   if std_used() then objs[#objs + 1] = toolchain.build .. "/obj/std.o" end
   local out, shape = t.out, {}
   if kind == "shlib" then
@@ -205,7 +216,7 @@ function linked(t, kind)
   if t.default ~= false then default(out) end
   return out
 end
--- shlib{name=, srcs=, objs=, flags=, deps=, link=, out=}: libNAME.so (an
+-- shlib{name=, srcs=, objs=, flags=, deps=, link=, out=, after=}: libNAME.so (an
 -- Android app's native library); built by default.
 function shlib(t) return linked(t, "shlib") end
 
@@ -486,6 +497,7 @@ private:
         std::string src, obj;
         ModuleUnit scanned;
         std::vector<std::string> flags;  // its own: a library's include folders and defines
+        std::vector<std::string> after;  // files it waits for: generated headers
     };
 
     /// write_file(path, text): the file holds the text, written now and only
@@ -545,10 +557,29 @@ private:
     static int l_module_unit(lua_State* L) {
         Context& c = self(L);
         const std::string src = luaL_checkstring(L, 1), obj = luaL_checkstring(L, 2);
-        std::ifstream in(src, std::ios::binary);
-        if (!in) return luaL_error(L, "rules.module: cannot read %s", src.c_str());
-        const std::string text((std::istreambuf_iterator<char>(in)), {});
+        // Options (4th): after = files the compile waits for (generated
+        // headers), imports = a generated source's imports, given because
+        // it does not exist yet when the build file runs.
+        std::vector<std::string> after, declared;
+        bool generated = false;
+        if (lua_gettop(L) >= 4 && lua_istable(L, 4)) {
+            lua_getfield(L, 4, "after");
+            if (lua_istable(L, -1)) strings(L, lua_gettop(L), after);
+            lua_pop(L, 1);
+            lua_getfield(L, 4, "imports");
+            if (lua_istable(L, -1)) { strings(L, lua_gettop(L), declared); generated = true; }
+            lua_pop(L, 1);
+        }
+        std::string text;
+        if (generated) {
+            text.clear();
+        } else {
+            std::ifstream in(src, std::ios::binary);
+            if (!in) return luaL_error(L, "rules.module: cannot read %s", src.c_str());
+            text.assign(std::istreambuf_iterator<char>(in), {});
+        }
         auto unit = scan_source(text);
+        if (unit) for (std::string& m : declared) unit->imports.push_back(std::move(m));
         if (!unit) return luaL_error(L, "%s: %s", src.c_str(), unit.error().c_str());
         // What the headers it includes by quotes import, theirs too: the
         // source waits for those modules as for its own imports.
@@ -574,8 +605,8 @@ private:
         if (std::ranges::find(unit->imports, "std") != unit->imports.end() ||
             std::ranges::find(unit->imports, "std.compat") != unit->imports.end())
             c.std_used_ = true;
-        Unit u{src, obj, std::move(*unit), {}};
-        if (lua_gettop(L) >= 3) strings(L, 3, u.flags);
+        Unit u{src, obj, std::move(*unit), {}, std::move(after)};
+        if (lua_gettop(L) >= 3 && lua_istable(L, 3)) strings(L, 3, u.flags);
         c.units_.push_back(std::move(u));
         return 0;
     }
@@ -716,6 +747,7 @@ private:
             Target t;
             t.outputs = {u.obj};
             t.inputs = {u.src};
+            t.inputs.insert(t.inputs.end(), u.after.begin(), u.after.end());
             for (const std::string& m : u.scanned.imports) {
                 auto it = provider.find(m == "std.compat" ? "std" : m);
                 if (it == provider.end()) return std::unexpected(std::format("{} imports {}, which no unit provides", u.src, m));

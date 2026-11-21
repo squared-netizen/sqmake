@@ -106,6 +106,12 @@ include("sq/build/template.lua")
   (`sysroot`, `runtimes`, `llvm_bin`, `target`), for what a build file names
   by path: Android's libraries in the sysroot, llvm-objcopy.
 
+A generator's output (0.6.0): a source written as `{path, imports = {...}}`
+is one a target makes, its imports given because it cannot be read while
+the build file runs; `after = {...}` on `library{}`, `exe{}` or `shlib{}`
+makes every compile wait for those files (the generator's headers).
+template.android.cpp's sqgen step is the case.
+
 Flags gathered from usage requirements are kept once each, at their first
 place; archives at their last, so a link still finds each after its users.
 

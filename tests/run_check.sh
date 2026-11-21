@@ -336,6 +336,38 @@ touch wf/in/c
 (cd wf && "$sqmake" > out.txt 2>&1) && grep -q 'in/c' wf/build/copy.txt || die "write_file: a new file not listed: $(cat wf/out.txt)"
 ok "write_file: written when it changes, and only then"
 
+# A generated source and header (as sqgen's): the generator runs first, the
+# compiles that include its header wait for it, and the generated source's
+# imports (given, as it is not there to read) order it after the module.
+mkdir -p gen/src
+cat > gen/src/names.cppm <<'C'
+export module names;
+import std;
+export std::string name() { return "generated"; }
+C
+cat > gen/src/main.cpp <<'C'
+#include <said.hpp>
+import std;
+int main() { std::println("{}", said()); }
+C
+cat > gen/gen.sh <<'SH'
+#!/bin/sh
+mkdir -p build/gen
+printf 'const char* said();\n' > build/gen/said.hpp
+printf 'import std;\nimport names;\nconst char* said() { static std::string s = name(); return s.c_str(); }\n' > build/gen/said.cpp
+SH
+chmod +x gen/gen.sh
+cat > gen/build.lua <<'L'
+toolchain.cxxflags = {"-std=c++23", "-stdlib=libc++", "-O1"}
+toolchain.ldflags = {"-stdlib=libc++"}
+target{out = "build/gen/said.cpp", ins = {"gen.sh"}, cmd = {"./gen.sh"}}
+exe{name = "hello", srcs = {"src/names.cppm", "src/main.cpp", {"build/gen/said.cpp", imports = {"std", "names"}}},
+    flags = {"-Ibuild/gen"}, after = {"build/gen/said.cpp"}}
+L
+(cd gen && "$sqmake" > out.txt 2>&1) || die "a generated source: $(cat gen/out.txt)"
+[ "$(gen/build/hello)" = "generated" ] || die "a generated source's program says $(gen/build/hello)"
+ok "a generated source and header: generated first, its imports given"
+
 "$sqmake" clean > /dev/null
 [ ! -e build/hello ] && [ ! -e build/.sqmake/state ] || die "clean left files"
 ok "clean: outputs and state gone"
