@@ -71,17 +71,36 @@ fingerprints) lives in one small state file in the build folder.
 
 ## 3. Describing a build
 
-### 3.1 A conventional project (proposed syntax)
+### 3.1 A conventional project (decided 2026-11-21)
 
-Templates imply a layout, so a project following one names itself, its kind
-and what it depends on; sqmake infers its sources and outputs:
+The conventions are Lua files in the workspace, not knowledge inside
+sqmake (square's spec §4): a template's `sq/build/template.lua` knows its
+layout, and a project's `build.lua` includes it. sqmake gives them the
+building blocks (0.5.0):
 
 ```lua
-project "mygame" {
-  template = "terminal",
-  deps     = { "squared" },
-}
+-- sq/build/template.lua (a template's; generated)
+local squared = include("squared/build/squared.lua")   -- squared's own libraries
+local app = shlib{name = "mygame", srcs = glob("sq_app/src/*.cpp"), deps = squared}
+apk{name = "mygame", manifest = "sq_android/AndroidManifest.xml", res = "sq_android/res",
+    assets = "sq_android/assets", files = {{"lib/arm64-v8a/libmygame.so", app}}}
+
+-- build.lua (the developer's)
+include("sq/build/template.lua")
 ```
+
+- `include(path)`: another Lua file, run in the build file's environment.
+- `library{name, srcs, flags, public = {flags, link}, deps}`, `exe{...}`,
+  `shlib{...}`: libraries with usage requirements (§3.3); a source is a
+  module unit or not (scanned either way), or C.
+- `target{..., cmds = {{...}, {...}}}`: commands in order, each run after
+  the one before succeeded.
+- `apk{...}`: apkpack's link (manifest, `res/`, `assets/`), add (the native
+  library, `classes.dex`), sign and verify. The key is apkpack's
+  (`~/.android/apkpack.pem`), made once with `apkpack keygen`: sqmake never
+  makes one, so a squared key is never replaced.
+
+There is no `project{...}` built into sqmake.
 
 The C++ standard is not a project's choice: it is the toolchain's (§4.3).
 
@@ -108,7 +127,10 @@ Each of make's pain points has a plain replacement:
 
 A library declares, as public or private, the include paths, flags,
 libraries and modules its users need. A target that links it gets the public
-ones, and passes on those it re-exports.
+ones, and passes on those it re-exports. In 0.5.0: `library{}`'s `flags` are
+its own, `public.flags` its users' too (and its own), `public.link` its
+users' links'; its archive comes before its dependencies' on every link that
+uses it, so a static link finds every symbol.
 
 ## 4. Toolchains
 
@@ -302,6 +324,10 @@ The questions draft 0.1 left open, decided as recommended, and one more:
    declarations order the compiles; one std module. And `sqmake call` and
    `describe` (0.3.0, done): the SDK's tool protocol (squared's
    docs/developer/sdk-tools.md), JSON through sq.data (vendored).
-3. **Conventions**: `project{...}` builds squared, the app and the APK
-   (apkpack).
+3. **Conventions**: squared, the app and the APK (apkpack) built from Lua
+   files in the workspace. The building blocks (0.5.0, done: §3.1):
+   `include()`, `library{}`/`exe{}`/`shlib{}` with usage requirements, a
+   target of several commands, `apk{}`. Next: squared's
+   `build/squared.lua` (its libraries) and template.android.cpp's
+   `sq/build/template.lua`.
 4. **The switch**: sqterm built and installed with sqmake, on the phone.
