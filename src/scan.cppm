@@ -120,6 +120,36 @@ inline std::expected<ModuleUnit, std::string> scan_source(std::string_view text)
     return u;
 }
 
+/// The files a source includes by quotes (#include "x.hpp"), as written: a
+/// header that imports modules (import squared;) makes its includer depend
+/// on them. Found on the text with comments blanked, so a commented-out
+/// include is not one; the path read from the text itself.
+inline std::vector<std::string> quoted_includes(std::string_view text) {
+    const std::string b = scandetail::blank(text);
+    std::vector<std::string> out;
+    std::size_t start = 0;
+    while (start < b.size()) {
+        std::size_t end = b.find('\n', start);
+        if (end == std::string::npos) end = b.size();
+        std::size_t i = start;
+        auto spaces = [&] {
+            while (i < end && (b[i] == ' ' || b[i] == '\t')) ++i;
+        };
+        spaces();
+        if (i < end && b[i] == '#') {
+            ++i;
+            spaces();
+            if (std::string_view(b).substr(i, 7) == "include") {
+                const std::size_t q1 = text.find('"', i + 7);
+                const std::size_t q2 = q1 == std::string_view::npos ? q1 : text.find('"', q1 + 1);
+                if (q2 != std::string_view::npos && q2 < end) out.emplace_back(text.substr(q1 + 1, q2 - q1 - 1));
+            }
+        }
+        start = end + 1;
+    }
+    return out;
+}
+
 /// The file clang looks for a module's BMI under (-fprebuilt-module-path):
 /// a.b:part is a.b-part.pcm.
 inline std::string bmi_name(std::string_view module) {
