@@ -99,6 +99,15 @@ include("sq/build/template.lua")
   library, `classes.dex`), sign and verify. The key is apkpack's
   (`~/.android/apkpack.pem`), made once with `apkpack keygen`: sqmake never
   makes one, so a squared key is never replaced.
+- `write_file(path, text)` (0.6.0): a generated file written while the build
+  file runs, and only when its content changes (so what reads it is not
+  rebuilt for nothing); squared's asset index is one.
+- `toolchain.sdk()`'s table also says where the toolchain's parts are
+  (`sysroot`, `runtimes`, `llvm_bin`, `target`), for what a build file names
+  by path: Android's libraries in the sysroot, llvm-objcopy.
+
+Flags gathered from usage requirements are kept once each, at their first
+place; archives at their last, so a link still finds each after its users.
 
 There is no `project{...}` built into sqmake.
 
@@ -197,7 +206,10 @@ wrappers, whose sysroot, headers and target flags it would not see, so scanning
 squared failed on its headers. The declarations alone need no toolchain and
 are quick on the phone. The limit: a module or import declaration made by a
 macro, or under `#if`, is not seen; squared writes neither. A header unit
-(`import <x>;`) is refused.
+(`import <x>;`) is refused. Imports written in a header the source includes
+with quotes (`#include "x.h"`, found beside the file that includes it, and
+the headers it includes) are the source's too (0.6.0): squared's headers
+import its modules.
 
 ### 5.2 Compiled modules (decided)
 
@@ -327,7 +339,8 @@ The questions draft 0.1 left open, decided as recommended, and one more:
 3. **Conventions**: squared, the app and the APK (apkpack) built from Lua
    files in the workspace. The building blocks (0.5.0, done: §3.1):
    `include()`, `library{}`/`exe{}`/`shlib{}` with usage requirements, a
-   target of several commands, `apk{}`. Next: squared's
-   `build/squared.lua` (its libraries) and template.android.cpp's
-   `sq/build/template.lua`.
+   target of several commands, `apk{}`. Then (0.6.0, done): `write_file`,
+   headers' imports, flags kept once; squared's `build/squared.lua` (its
+   libraries) and template.android.cpp's `sq/build/template.lua` build
+   sqterm's APK with no make and no shell.
 4. **The switch**: sqterm built and installed with sqmake, on the phone.

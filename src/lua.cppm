@@ -19,6 +19,8 @@
 //   glob(pattern)         files matching it, sorted: * and ? within a
 //                         name, ** across folders
 //   default(name, ...)    what `sqmake` builds when given no goal
+//   write_file(path, text)  the file holds the text (written only when it
+//                         differs): a list the build derives
 //   include(path)         another Lua file run in this environment (a
 //                         template's or a kit's conventions); what it
 //                         returns
@@ -134,6 +136,28 @@ end
 -- its users need: public flags (include folders, defines) for their
 -- compiles, and its archive and public link flags for their links, its own
 -- dependencies' after its own, so a static link finds every symbol.
+-- A list of lists as one list of words, each once: its first place, or for
+-- archives its last (a library's dependencies after everything using them).
+local function flat(list, out)
+  out = out or {}
+  for _, v in ipairs(list) do
+    if type(v) == "table" then flat(v, out) else out[#out + 1] = v end
+  end
+  return out
+end
+local function once(list, keep_last)
+  local words, seen, out = flat(list), {}, {}
+  if keep_last then
+    for i = #words, 1, -1 do
+      if not seen[words[i]] then seen[words[i]] = true; table.insert(out, 1, words[i]) end
+    end
+  else
+    for _, w in ipairs(words) do
+      if not seen[w] then seen[w] = true; out[#out + 1] = w end
+    end
+  end
+  return out
+end
 local function needs(deps)
   local flags, archives, link = {}, {}, {}
   for _, d in ipairs(deps or {}) do
@@ -141,7 +165,7 @@ local function needs(deps)
     archives[#archives + 1] = d.archives
     link[#link + 1] = d.link
   end
-  return flags, archives, link
+  return once(flags), once(archives, true), once(link)
 end
 -- A source by its kind: C, or C++ (a module unit or not: scanned either way).
 local function compile(src, flags)
@@ -281,6 +305,7 @@ public:
         api("std_used", &Context::l_std_used);
         api("sdk_toolchain", &Context::l_sdk_toolchain);
         api("include", &Context::l_include);
+        api("write_file", &Context::l_write_file);
         for (const char* lib : {"string", "table", "math", "utf8"}) {
             lua_getglobal(L, lib);
             lua_setfield(L, env, lib);
@@ -463,6 +488,39 @@ private:
         std::vector<std::string> flags;  // its own: a library's include folders and defines
     };
 
+    /// write_file(path, text): the file holds the text, written now and only
+    /// when it differs (so what depends on it is not rebuilt for nothing): a
+    /// list the build derives, such as squared's asset index. Its folder is
+    /// made. Returns the path.
+    static int l_write_file(lua_State* L) {
+        const std::string path = luaL_checkstring(L, 1);
+        std::size_t n = 0;
+        const char* data = luaL_checklstring(L, 2, &n);
+        const std::string_view text(data, n);
+        std::error_code ec;
+        {
+            std::ifstream in(path, std::ios::binary);
+            if (in) {
+                const std::string old((std::istreambuf_iterator<char>(in)), {});
+                if (old == text) {
+                    lua_pushvalue(L, 1);
+                    return 1;
+                }
+            }
+        }
+        if (auto parent = std::filesystem::path(path).parent_path(); !parent.empty()) std::filesystem::create_directories(parent, ec);
+        const std::string temp = path + ".sqmake-new";
+        {
+            std::ofstream out(temp, std::ios::binary);
+            out.write(text.data(), static_cast<std::streamsize>(text.size()));
+            if (!out) return luaL_error(L, "write_file: cannot write %s", path.c_str());
+        }
+        std::filesystem::rename(temp, path, ec);
+        if (ec) return luaL_error(L, "write_file: cannot write %s: %s", path.c_str(), ec.message().c_str());
+        lua_pushvalue(L, 1);
+        return 1;
+    }
+
     /// include(path): another Lua file of the workspace, run in the build
     /// file's own environment (square's sq/build/template.lua and the like).
     static int l_include(lua_State* L) {
@@ -492,6 +550,27 @@ private:
         const std::string text((std::istreambuf_iterator<char>(in)), {});
         auto unit = scan_source(text);
         if (!unit) return luaL_error(L, "%s: %s", src.c_str(), unit.error().c_str());
+        // What the headers it includes by quotes import, theirs too: the
+        // source waits for those modules as for its own imports.
+        {
+            std::set<std::string> seen;
+            std::vector<std::pair<std::filesystem::path, std::string>> todo;  // header, its text
+            for (const std::string& inc : quoted_includes(text)) todo.emplace_back(std::filesystem::path(src).parent_path() / inc, "");
+            while (!todo.empty()) {
+                const std::filesystem::path header = todo.back().first.lexically_normal();
+                todo.pop_back();
+                if (!seen.insert(header.string()).second) continue;
+                std::ifstream h(header, std::ios::binary);
+                if (!h) continue;  // not found beside it: a system or -I header
+                const std::string htext((std::istreambuf_iterator<char>(h)), {});
+                auto hunit = scan_source(htext);
+                if (!hunit) return luaL_error(L, "%s (included by %s): %s", header.string().c_str(), src.c_str(), hunit.error().c_str());
+                for (std::string& m : hunit->imports) unit->imports.push_back(std::move(m));
+                for (const std::string& inc : quoted_includes(htext)) todo.emplace_back(header.parent_path() / inc, "");
+            }
+            std::ranges::sort(unit->imports);
+            unit->imports.erase(std::unique(unit->imports.begin(), unit->imports.end()), unit->imports.end());
+        }
         if (std::ranges::find(unit->imports, "std") != unit->imports.end() ||
             std::ranges::find(unit->imports, "std.compat") != unit->imports.end())
             c.std_used_ = true;
@@ -543,6 +622,13 @@ private:
             lua_setfield(L, -2, "std_cppm");
             list(t->link);
             lua_setfield(L, -2, "ldflags");
+            // Where it was found: for a build that names a library by path
+            // (Android's libEGL.so in the sysroot, say).
+            for (auto [key, value] : {std::pair{"sysroot", &t->sysroot}, {"runtimes", &t->runtimes},
+                                      {"llvm_bin", &t->llvm_bin}, {"target", &t->triple}}) {
+                lua_pushstring(L, value->c_str());
+                lua_setfield(L, -2, key);
+            }
             return 1;
         }
         const std::string& script = file;
