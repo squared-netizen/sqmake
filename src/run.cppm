@@ -177,6 +177,7 @@ public:
                     ++result.ran;  // with explain: what would run
                     std::println(o_.out, "[{}/{}] {}\n    because {}\n    {}", counter, total, t.description.empty() ? t.outputs[0] : t.description, reason,
                                  quoted(t.command.argv));
+                    for (const auto& next : t.command.then) std::println(o_.out, "    {}", quoted(next));
                     done_.insert(i);
                     ran[i] = true;
                     continue;
@@ -188,7 +189,14 @@ public:
                     if (auto parent = std::filesystem::path(out).parent_path(); !parent.empty()) std::filesystem::create_directories(parent, ec);
                 ++running;
                 threads.emplace_back([&, i] {
-                    Ran r = run_command(graph_.at(i).command.argv);
+                    const Command& c = graph_.at(i).command;
+                    Ran r = run_command(c.argv);
+                    for (const auto& next : c.then) {
+                        if (r.status != 0) break;
+                        Ran more = run_command(next);
+                        r.status = more.status;
+                        r.output += more.output;
+                    }
                     std::lock_guard lock(mu);
                     finished.emplace_back(i, std::move(r));
                     cv.notify_one();

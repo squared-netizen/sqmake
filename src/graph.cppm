@@ -16,6 +16,9 @@ export namespace sqmake {
 
 struct Command {
     std::vector<std::string> argv;  // argv[0] found on PATH; empty: an alias
+    /// More commands after argv, in order, each run only when the one
+    /// before it succeeded (an APK linked, then a library added to it).
+    std::vector<std::vector<std::string>> then;
 };
 
 struct Target {
@@ -94,6 +97,10 @@ inline std::uint64_t command_hash(const Target& t, std::string_view extra = {}) 
         h = (h ^ 0xff) * 0x100000001b3ULL;  // a separator no argument holds
     };
     for (const std::string& a : t.command.argv) mix(a);
+    for (const auto& next : t.command.then) {
+        mix("\x01then");
+        for (const std::string& a : next) mix(a);
+    }
     mix(t.depfile);
     mix(extra);
     return h;

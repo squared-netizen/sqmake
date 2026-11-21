@@ -3,7 +3,7 @@
 The build system of the [squared SDK](https://squared-netizen.github.io/squared-netizen/):
 it builds what a project's `build.lua` describes, on its own.
 
-**Status: phases 1 and 2 of 4 built** (sqmake 0.4.0: `call`, and the toolchain found with no shell): the engine, and C++
+**Status: phases 1 and 2 of 4 built, phase 3 begun** (sqmake 0.5.0: `call`, the toolchain found with no shell, and the conventions' building blocks): the engine, and C++
 modules with the SDK's toolchain. Conventions and building sqterm come next
 ([docs/spec.md §11](docs/spec.md)).
 
@@ -28,6 +28,17 @@ data that sqmake resolves itself: no shell, no wrapper scripts):
 ```lua
 toolchain.sdk("squared/build/toolchain.lua")  -- clang 23, libc++ 23, bionic
 lib("game", map(glob("src/**/*.cpp*"), rules.module))
+```
+
+Libraries with usage requirements, a native library and an APK (apkpack),
+in a file a template's build includes:
+
+```lua
+local greet = library{name = "greet", srcs = glob("greet/src/*.cpp"),
+                      public = {flags = {"-Igreet/include"}}}
+local so = shlib{name = "game", srcs = glob("src/*.cpp"), deps = {greet}}
+apk{name = "game", manifest = "sq_android/AndroidManifest.xml", res = "sq_android/res",
+    assets = "sq_android/assets", files = {{"lib/arm64-v8a/libgame.so", so}}}
 ```
 
 Each source's `export module` / `import` lines order the compiles; BMIs go

@@ -19,9 +19,15 @@
 //   glob(pattern)         files matching it, sorted: * and ? within a
 //                         name, ** across folders
 //   default(name, ...)    what `sqmake` builds when given no goal
+//   include(path)         another Lua file run in this environment (a
+//                         template's or a kit's conventions); what it
+//                         returns
+//   target{..., cmds={{...}, {...}}}
+//                         commands in order, each after the one before
 //
 // and the prelude's (Lua, below): toolchain, rules.cxx, rules.cc,
-// rules.module, map, lib, exe; toolchain.sdk(path) for the SDK's own
+// rules.module (each with a source's own flags), map, lib, exe, and with
+// usage requirements library{}, exe{}, shlib{}, apk{} (apkpack); toolchain.sdk(path) for the SDK's own
 // toolchain (squared's build/toolchain.lua, resolved by sqmake.toolchain;
 // an older squared's build/toolchain.sh, through bash).
 //
@@ -67,23 +73,24 @@ toolchain = {
 }
 rules = {}
 -- A C++ source compiled to an object; its headers found by -MMD.
-function rules.cxx(src)
+-- flags: the source's own (a library's include folders and defines).
+function rules.cxx(src, flags)
   local obj = toolchain.build .. "/obj/" .. src .. ".o"
   target{out = obj, ins = {src}, depfile = obj .. ".d", desc = "cxx " .. src,
-         cmd = {toolchain.cxx, toolchain.cxxflags, "-MMD", "-MF", obj .. ".d", "-c", src, "-o", obj}}
+         cmd = {toolchain.cxx, toolchain.cxxflags, flags or {}, "-MMD", "-MF", obj .. ".d", "-c", src, "-o", obj}}
   return obj
 end
-function rules.cc(src)
+function rules.cc(src, flags)
   local obj = toolchain.build .. "/obj/" .. src .. ".o"
   target{out = obj, ins = {src}, depfile = obj .. ".d", desc = "cc " .. src,
-         cmd = {toolchain.cc, toolchain.cflags, "-MMD", "-MF", obj .. ".d", "-c", src, "-o", obj}}
+         cmd = {toolchain.cc, toolchain.cflags, flags or {}, "-MMD", "-MF", obj .. ".d", "-c", src, "-o", obj}}
   return obj
 end
 -- A C++ source that is, or imports, a module: scanned now, its target
 -- made when the build file has run (inputs: the BMIs it imports).
-function rules.module(src)
+function rules.module(src, flags)
   local obj = toolchain.build .. "/obj/" .. src .. ".o"
-  module_unit(src, obj)
+  module_unit(src, obj, flags or {})
   return obj
 end
 -- The SDK's toolchain: squared's build/toolchain.lua, found here by sqmake
@@ -112,11 +119,104 @@ function lib(name, objs)
   return out
 end
 -- A program linked from objects (and libraries); built by default. A
--- program whose modules import std links std's object too.
+-- program whose modules import std links std's object too. Or a table:
+-- exe{name=, srcs=, objs=, flags=, deps=, link=}, as shlib's.
 function exe(name, objs)
+  if type(name) == "table" then return linked(name, "exe") end
   local out = toolchain.build .. "/" .. name
   if std_used() then objs = {objs, toolchain.build .. "/obj/std.o"} end
   target{out = out, ins = objs, desc = "link " .. name, cmd = {toolchain.cxx, objs, toolchain.ldflags, "-o", out}}
+  default(out)
+  return out
+end
+
+-- Usage requirements (spec 3.3). A library made by library{} carries what
+-- its users need: public flags (include folders, defines) for their
+-- compiles, and its archive and public link flags for their links, its own
+-- dependencies' after its own, so a static link finds every symbol.
+local function needs(deps)
+  local flags, archives, link = {}, {}, {}
+  for _, d in ipairs(deps or {}) do
+    flags[#flags + 1] = d.public_flags
+    archives[#archives + 1] = d.archives
+    link[#link + 1] = d.link
+  end
+  return flags, archives, link
+end
+-- A source by its kind: C, or C++ (a module unit or not: scanned either way).
+local function compile(src, flags)
+  if src:match("%.c$") then return rules.cc(src, flags) end
+  return rules.module(src, flags)
+end
+-- library{name=, srcs={...}, flags={...}, public={flags={...}, link={...}},
+-- deps={other libraries}}: libNAME.a, and what a user of it needs.
+function library(t)
+  local public = t.public or {}
+  local dflags, darchives, dlink = needs(t.deps)
+  local own = {t.flags or {}, public.flags or {}, dflags}
+  local objs = {t.objs or {}}
+  for _, src in ipairs(t.srcs or {}) do objs[#objs + 1] = compile(src, own) end
+  local out = lib(t.name, objs)
+  return {name = t.name, out = out,
+          public_flags = {public.flags or {}, dflags},
+          archives = {out, darchives},
+          link = {public.link or {}, dlink}}
+end
+-- What exe{} and shlib{} share: the sources compiled with the deps' public
+-- flags, the link with their archives and link flags.
+function linked(t, kind)
+  local dflags, darchives, dlink = needs(t.deps)
+  local objs = {t.objs or {}}
+  for _, src in ipairs(t.srcs or {}) do objs[#objs + 1] = compile(src, {t.flags or {}, dflags}) end
+  if std_used() then objs[#objs + 1] = toolchain.build .. "/obj/std.o" end
+  local out, shape = t.out, {}
+  if kind == "shlib" then
+    out = out or (toolchain.build .. "/lib" .. t.name .. ".so")
+    shape = {"-shared", "-Wl,-soname,lib" .. t.name .. ".so"}
+  else
+    out = out or (toolchain.build .. "/" .. t.name)
+  end
+  target{out = out, ins = {objs, darchives}, desc = "link " .. (kind == "shlib" and "lib" .. t.name .. ".so" or t.name),
+         cmd = {toolchain.cxx, shape, objs, darchives, dlink, t.link or {}, toolchain.ldflags, "-o", out}}
+  if t.default ~= false then default(out) end
+  return out
+end
+-- shlib{name=, srcs=, objs=, flags=, deps=, link=, out=}: libNAME.so (an
+-- Android app's native library); built by default.
+function shlib(t) return linked(t, "shlib") end
+
+-- An APK, packed and signed by apkpack (no Java, no Android SDK):
+--   apk{name=, manifest=, res=, assets=, min_sdk=, target_sdk=,
+--       files={{"lib/arm64-v8a/libNAME.so", so}, {"classes.dex", dex}},
+--       key=, debuggable=, apkpack=}
+-- The key is apkpack's (~/.android/apkpack.pem by default), made once with
+-- `apkpack keygen`; sqmake never makes one. Built by default.
+function apk(t)
+  local apkpack = t.apkpack or toolchain.apkpack or "apkpack"
+  local dir = toolchain.build .. "/apk/" .. t.name
+  local unsigned = dir .. "/unsigned.apk"
+  local out = t.out or (toolchain.build .. "/" .. t.name .. ".apk")
+  local key = t.key or ((os.getenv("HOME") or "") .. "/.android/apkpack.pem")
+  local inside, staged = {}, {}
+  for _, f in ipairs(t.files or {}) do
+    local at = dir .. "/" .. f[1]
+    target{out = at, ins = {f[2]}, desc = "stage " .. f[1], cmd = {"cp", f[2], at}}
+    inside[#inside + 1] = f[1]
+    staged[#staged + 1] = at
+  end
+  local ins = {t.manifest, staged}
+  if t.res then ins[#ins + 1] = glob(t.res .. "/**/*") end
+  if t.assets then ins[#ins + 1] = glob(t.assets .. "/**/*") end
+  local link = {apkpack, "link", "-o", unsigned, "--manifest", t.manifest,
+                "--min-sdk", tostring(t.min_sdk or 28), "--target-sdk", tostring(t.target_sdk or 28)}
+  if t.res then link = {link, "--res", t.res} end
+  if t.assets then link = {link, "--assets", t.assets} end
+  if t.debuggable then link = {link, "--debuggable"} end
+  local cmds = {link}
+  if #inside > 0 then cmds[#cmds + 1] = {apkpack, "add", unsigned, "-C", dir, inside} end
+  target{out = unsigned, ins = ins, desc = "apkpack link " .. t.name, cmds = cmds}
+  target{out = out, ins = {unsigned, key}, desc = "apkpack sign " .. t.name .. ".apk",
+         cmds = {{apkpack, "sign", key, unsigned, out}, {apkpack, "verify", out}}}
   default(out)
   return out
 end
@@ -151,6 +251,7 @@ public:
     }
 
     ~Context() {
+        if (!owned_ && L_ && env_ref_ != LUA_NOREF) luaL_unref(L_, LUA_REGISTRYINDEX, env_ref_);
         if (owned_ && L_) lua_close(L_);
     }
     Context(const Context&) = delete;
@@ -166,6 +267,8 @@ public:
         // The environment: the API and Lua's safe libraries.
         lua_newtable(L);
         const int env = lua_gettop(L);
+        lua_pushvalue(L, env);
+        env_ref_ = luaL_ref(L, LUA_REGISTRYINDEX);
         auto api = [&](const char* name, lua_CFunction f) {
             lua_pushlightuserdata(L, this);
             lua_pushcclosure(L, f, 1);
@@ -177,6 +280,7 @@ public:
         api("module_unit", &Context::l_module_unit);
         api("std_used", &Context::l_std_used);
         api("sdk_toolchain", &Context::l_sdk_toolchain);
+        api("include", &Context::l_include);
         for (const char* lib : {"string", "table", "math", "utf8"}) {
             lua_getglobal(L, lib);
             lua_setfield(L, env, lib);
@@ -197,6 +301,7 @@ public:
             lua_pushvalue(L, env);
             lua_setglobal(L, "sqmake");
         }
+        including_ = {file.string()};  // a file that includes it again is a cycle
         for (auto [code, name] : {std::pair{std::string(prelude), std::string("=prelude")}, std::pair{text, "@" + file.string()}}) {
             if (luaL_loadbufferx(L, code.data(), code.size(), name.c_str(), "t") != LUA_OK) {
                 std::string why = lua_tostring(L, -1);
@@ -278,7 +383,22 @@ private:
         if (lua_isstring(L, -1)) t.depfile = lua_tostring(L, -1);
         lua_getfield(L, 1, "desc");
         if (lua_isstring(L, -1)) t.description = lua_tostring(L, -1);
-        lua_pop(L, 5);
+        // cmds: commands in order, each after the one before succeeded.
+        lua_getfield(L, 1, "cmds");
+        if (lua_istable(L, -1)) {
+            if (!t.command.argv.empty()) return luaL_error(L, "target: cmd or cmds, not both");
+            const lua_Integer n = luaL_len(L, -1);
+            for (lua_Integer i = 1; i <= n; ++i) {
+                lua_geti(L, -1, i);
+                std::vector<std::string> argv;
+                strings(L, -1, argv);
+                lua_pop(L, 1);
+                if (argv.empty()) continue;
+                if (t.command.argv.empty()) t.command.argv = std::move(argv);
+                else t.command.then.push_back(std::move(argv));
+            }
+        }
+        lua_pop(L, 6);
         auto added = self(L).graph_.add(std::move(t));
         if (!added) return luaL_error(L, "target: %s", added.error().c_str());
         return 0;
@@ -340,7 +460,29 @@ private:
     struct Unit {
         std::string src, obj;
         ModuleUnit scanned;
+        std::vector<std::string> flags;  // its own: a library's include folders and defines
     };
+
+    /// include(path): another Lua file of the workspace, run in the build
+    /// file's own environment (square's sq/build/template.lua and the like).
+    static int l_include(lua_State* L) {
+        Context& c = self(L);
+        const std::string file = luaL_checkstring(L, 1);
+        if (std::ranges::find(c.including_, file) != c.including_.end()) return luaL_error(L, "include: %s includes itself", file.c_str());
+        std::ifstream in(file, std::ios::binary);
+        if (!in) return luaL_error(L, "include: cannot read %s", file.c_str());
+        const std::string text((std::istreambuf_iterator<char>(in)), {});
+        const std::string name = "@" + file;
+        if (luaL_loadbufferx(L, text.data(), text.size(), name.c_str(), "t") != LUA_OK) return lua_error(L);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, c.env_ref_);
+        lua_setupvalue(L, -2, 1);  // _ENV: the build file's
+        c.including_.push_back(file);
+        const int base = lua_gettop(L) - 1;  // below the chunk
+        const int status = lua_pcall(L, 0, LUA_MULTRET, 0);
+        c.including_.pop_back();
+        if (status != LUA_OK) return lua_error(L);
+        return lua_gettop(L) - base;  // what the file returns (its libraries, say)
+    }
 
     static int l_module_unit(lua_State* L) {
         Context& c = self(L);
@@ -353,7 +495,9 @@ private:
         if (std::ranges::find(unit->imports, "std") != unit->imports.end() ||
             std::ranges::find(unit->imports, "std.compat") != unit->imports.end())
             c.std_used_ = true;
-        c.units_.push_back(Unit{src, obj, std::move(*unit)});
+        Unit u{src, obj, std::move(*unit), {}};
+        if (lua_gettop(L) >= 3) strings(L, 3, u.flags);
+        c.units_.push_back(std::move(u));
         return 0;
     }
 
@@ -492,6 +636,7 @@ private:
                 t.inputs.push_back(it->second);
             }
             t.command.argv = base();
+            t.command.argv.insert(t.command.argv.end(), u.flags.begin(), u.flags.end());
             t.depfile = u.obj + ".d";
             t.command.argv.insert(t.command.argv.end(), {"-MMD", "-MF", t.depfile, "-c", u.src});
             if (u.scanned.provides) {
@@ -511,6 +656,8 @@ private:
     std::string fingerprint_;
     lua_State* L_ = nullptr;
     bool owned_ = true;
+    int env_ref_ = LUA_NOREF;     // the build file's environment, for include()
+    std::vector<std::string> including_;  // the files being included, for a cycle
     Graph graph_;
     std::vector<std::string> defaults_;
     std::string build_dir_ = "build";

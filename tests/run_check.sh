@@ -14,6 +14,9 @@
 #   the toolchain  build/toolchain.lua found with no shell: a fake layout
 #                  (a stub clang), the fingerprint toolchain.sh would give,
 #                  each part's errors, values only
+#   conventions    include(), library{} with usage requirements, exe{} and
+#                  shlib{}, a target of several commands, apk{} (a stub
+#                  apkpack that records what it is asked)
 #   clean          the outputs and the state gone
 #
 # CXX is the compiler (clang++ by default).
@@ -234,6 +237,83 @@ printf 'clang = tonumber("23")\n' > tc/bad.lua
 "$sqmake" toolchain tc/bad.lua > out.txt 2>&1 && die "a description could call a function"
 grep -q "tonumber" out.txt || die "values only: $(cat out.txt)"
 ok "toolchain: found under \$PREFIX or its variables, toolchain.sh's fingerprint, every part's error, values only"
+
+# The conventions' building blocks: a template's Lua file included; a
+# library whose public flags reach its users' compiles and whose archive
+# reaches their links; a program and a shared library from it; a target of
+# two commands; an APK through apkpack (a stub that writes what it is asked
+# and makes the files a real one would).
+mkdir -p conv/greet/include conv/greet/src conv/app conv/sq_android/res/values conv/sq_android/assets conv/bin
+cat > conv/greet/include/greet.h <<'H'
+const char* greeting();
+H
+cat > conv/greet/src/greet.cpp <<'C'
+#include "greet.h"
+const char* greeting() { return GREETING; }
+C
+cat > conv/app/main.cpp <<'C'
+#include <cstdio>
+#include "greet.h"
+int main() { std::printf("%s\n", greeting()); }
+C
+cat > conv/app/native.cpp <<'C'
+#include "greet.h"
+extern "C" const char* native_greeting() { return greeting(); }
+C
+printf '<manifest/>\n' > conv/sq_android/AndroidManifest.xml
+printf '<resources/>\n' > conv/sq_android/res/values/strings.xml
+printf 'hello\n' > conv/sq_android/assets/hello.txt
+cat > conv/bin/apkpack <<'SH'
+#!/bin/sh
+echo "$*" >> "$APKPACK_LOG"
+case $1 in
+  link) shift; while [ $# -gt 0 ]; do [ "$1" = -o ] && { printf 'apk' > "$2"; shift; }; shift; done ;;
+  sign) printf 'signed' > "$4" ;;
+esac
+SH
+chmod +x conv/bin/apkpack
+: > conv/key.pem
+cat > conv/conventions.lua <<'L'
+-- What a template's sq/build/template.lua would hold.
+local greet = include("greet.lua")
+exe{name = "hello", srcs = {"app/main.cpp"}, deps = {greet}}
+local so = shlib{name = "native", srcs = {"app/native.cpp"}, deps = {greet}, flags = {"-fPIC"}}
+target{out = "build/twice.txt", ins = {"conventions.lua"}, desc = "twice",
+       cmds = {{"cp", "conventions.lua", "build/twice.txt"}, {"touch", "build/twice.txt"}}}
+default("build/twice.txt")
+apk{name = "app", manifest = "sq_android/AndroidManifest.xml", res = "sq_android/res",
+    assets = "sq_android/assets", key = "key.pem", apkpack = "bin/apkpack",
+    files = {{"lib/arm64-v8a/libnative.so", so}}}
+L
+cat > conv/greet.lua <<'L'
+return library{name = "greet", srcs = {"greet/src/greet.cpp"},
+               public = {flags = {"-Igreet/include", "-DGREETING=\"hello, library\""}}}
+L
+cat > conv/build.lua <<'L'
+toolchain.cxxflags = {"-std=c++23", "-O1", "-fPIC"}
+include("conventions.lua")
+L
+(cd conv && APKPACK_LOG=$PWD/apkpack.log "$sqmake" > out.txt 2>&1) || die "the conventions' build: $(cat conv/out.txt)"
+[ "$(conv/build/hello)" = "hello, library" ] || die "exe{} with a library's public flags: $(conv/build/hello)"
+grep -q 'SONAME.*libnative.so' <(llvm-readelf -d conv/build/libnative.so 2>/dev/null || readelf -d conv/build/libnative.so) ||
+    die "shlib{}: no soname libnative.so"
+[ -f conv/build/twice.txt ] && grep -q 'link app' conv/out.txt || die "cmds / apk: $(cat conv/out.txt)"
+grep -q '^link -o build/apk/app/unsigned.apk --manifest sq_android/AndroidManifest.xml --min-sdk 28 --target-sdk 28 --res sq_android/res --assets sq_android/assets$' conv/apkpack.log &&
+    grep -q '^add build/apk/app/unsigned.apk -C build/apk/app lib/arm64-v8a/libnative.so$' conv/apkpack.log &&
+    grep -q '^sign key.pem build/apk/app/unsigned.apk build/app.apk$' conv/apkpack.log &&
+    grep -q '^verify build/app.apk$' conv/apkpack.log && [ "$(cat conv/build/app.apk)" = signed ] &&
+    cmp -s conv/build/libnative.so conv/build/apk/app/lib/arm64-v8a/libnative.so || die "apk{}: $(cat conv/apkpack.log)"
+(cd conv && APKPACK_LOG=$PWD/apkpack.log "$sqmake" > out.txt 2>&1) && grep -q 'up to date' conv/out.txt || die "conventions: a second build ran: $(cat conv/out.txt)"
+sleep 1
+printf 'hello\nagain\n' > conv/sq_android/assets/hello.txt
+(cd conv && APKPACK_LOG=$PWD/apkpack.log "$sqmake" > out.txt 2>&1)
+grep -q 'apkpack link app' conv/out.txt && grep -q 'apkpack sign app' conv/out.txt && ! grep -q 'link hello' conv/out.txt ||
+    die "an asset's change: $(cat conv/out.txt)"
+printf 'include("build.lua")\n' > conv/loop.lua
+printf 'include("loop.lua")\n' >> conv/build.lua
+(cd conv && "$sqmake" > out.txt 2>&1) && die "an include cycle was accepted"
+grep -q 'includes itself' conv/out.txt || die "an include cycle: $(cat conv/out.txt)"
+ok "conventions: include(), library{} usage requirements, exe{}, shlib{}, cmds, apk{} (link, add, sign, verify)"
 
 "$sqmake" clean > /dev/null
 [ ! -e build/hello ] && [ ! -e build/.sqmake/state ] || die "clean left files"
