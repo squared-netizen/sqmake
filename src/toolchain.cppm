@@ -254,4 +254,74 @@ inline std::expected<void, std::string> make_resource_dir(const Toolchain& t, co
     return {};
 }
 
+/// libc++'s std.cppm, as the compiler's own module manifest names it
+/// (`-print-library-module-manifest-path`); "" when it names none.
+inline std::string libcxx_std_cppm(const std::vector<std::string>& cxx) {
+    if (cxx.empty()) return {};
+    std::vector<std::string> ask = cxx;
+    ask.insert(ask.end(), {"-stdlib=libc++", "-print-library-module-manifest-path"});
+    const Ran r = run_command(ask);
+    if (r.status != 0) return {};
+    const std::filesystem::path manifest = toolchaindetail::first_line(r.output);
+    std::ifstream in(manifest);
+    if (!in) return {};
+    const std::string json((std::istreambuf_iterator<char>(in)), {});
+    const std::size_t at = json.find("\"source-path\"");
+    if (at == std::string::npos) return {};
+    const std::size_t q1 = json.find('"', json.find(':', at) + 1), q2 = json.find('"', q1 + 1);
+    if (q1 == std::string::npos || q2 == std::string::npos) return {};
+    std::filesystem::path src = json.substr(q1 + 1, q2 - q1 - 1);
+    if (src.filename() != "std.cppm") return {};
+    return (src.is_absolute() ? src : manifest.parent_path() / src).lexically_normal().string();
+}
+
+/// `import std` for a hand build: the module and its object, built once for
+/// a compiler and its flags and kept under `dir` (the shared cache's std/).
+struct StdModule {
+    std::string pcm, obj;
+    bool built = false;  // made now, rather than found
+};
+
+inline std::expected<StdModule, std::string> std_module(const std::vector<std::string>& cxx,
+                                                         const std::vector<std::string>& flags,
+                                                         const std::string& std_cppm, const std::string& dir) {
+    if (cxx.empty()) return std::unexpected("no compiler ($CXX)");
+    if (std_cppm.empty() || !toolchaindetail::is_file(std_cppm))
+        return std::unexpected("no libc++ std.cppm: the compiler's module manifest names none");
+    // What the module depends on: the compiler (its --version), its words and
+    // the flags, and the source (where it is, and when it last changed).
+    std::vector<std::string> version = cxx;
+    version.push_back("--version");
+    const Ran v = run_command(version);
+    if (v.status != 0) return std::unexpected(std::format("{} --version failed", cxx.front()));
+    std::error_code ec;
+    const auto changed = std::filesystem::last_write_time(std_cppm, ec).time_since_epoch().count();
+    std::string key = toolchaindetail::first_line(v.output) + "\n" + std_cppm + "\n" + std::format("{}", changed);
+    for (const std::string& w : cxx) key += "\n" + w;
+    key += "\n--";
+    for (const std::string& f : flags) key += "\n" + f;
+    const std::filesystem::path at = std::filesystem::path(dir) / sha256_hex(key).substr(0, 16);
+    StdModule m{(at / "std.pcm").string(), (at / "std.o").string()};
+    if (toolchaindetail::is_file(m.pcm) && toolchaindetail::is_file(m.obj)) return m;
+
+    // Built beside, then renamed into place: two builds at once leave one whole pair.
+    std::filesystem::create_directories(at, ec);
+    if (ec) return std::unexpected(std::format("cannot make {}: {}", at.string(), ec.message()));
+    const std::string tag = std::format(".tmp-{}", std::chrono::steady_clock::now().time_since_epoch().count());
+    const std::string pcm = m.pcm + tag, obj = m.obj + tag;
+    std::vector<std::string> argv = cxx;
+    argv.insert(argv.end(), flags.begin(), flags.end());
+    argv.insert(argv.end(), {"-Wno-reserved-module-identifier", "-c", std_cppm, "-fmodule-output=" + pcm, "-o", obj});
+    const Ran r = run_command(argv);
+    if (r.status != 0) {
+        std::filesystem::remove(pcm, ec);
+        std::filesystem::remove(obj, ec);
+        return std::unexpected(std::format("building std failed:\n{}", r.output));
+    }
+    std::filesystem::rename(pcm, m.pcm, ec);
+    std::filesystem::rename(obj, m.obj, ec);
+    m.built = true;
+    return m;
+}
+
 }  // namespace sqmake

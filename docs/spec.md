@@ -280,6 +280,27 @@ or with other flags is never found there, rather than found and refused.
 own `std.cppm` (the `runtimes` package's) and shared by every target that
 imports it.
 
+### 5.3a `import std` in a hand build (decided 2026-11-22, 0.10.0)
+
+Small programs built by hand, one `clang++` line, should not need a
+precompile step written out each time. `sqmake std [FLAGS...]` builds libc++'s
+`std` module and its object for `$CXX` and those flags, once, keeps them in
+the shared cache (`std/<key>/`, the key the compiler's version, its words,
+the flags and `std.cppm`'s path and time), and prints what the compile and
+the link need:
+
+```sh
+clang++ -std=c++23 $(sqmake std -std=c++23) hello.cpp -o hello
+clang++ -std=c++23 $(sqmake std --compile -std=c++23) -c a.cpp      # the module only
+clang++ a.o $(sqmake std --link -std=c++23) -o a                      # the object only
+```
+
+Nothing precompiled is shipped in a package: a compiled module is valid only
+for the compiler and flags that made it, so it is made where it is used.
+`std.cppm` is found as the build finds it, from the compiler's own module
+manifest. Built beside its place and renamed in, so two at once leave one
+whole pair.
+
 ### 5.4 Libraries written as modules (decided)
 
 A library written as modules (sqcart, sqdrive) is vendored as sources and

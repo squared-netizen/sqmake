@@ -929,21 +929,7 @@ private:
             return argv;
         };
         if (std_used_) {
-            if (std_cppm.empty()) {
-                // The compiler's own libc++ module manifest names it.
-                std::vector<std::string> ask = cxx;
-                ask.insert(ask.end(), {"-stdlib=libc++", "-print-library-module-manifest-path"});
-                const Ran r = run_command(ask);
-                const std::filesystem::path manifest = r.output.substr(0, r.output.find('\n'));
-                std::ifstream in(manifest);
-                const std::string json((std::istreambuf_iterator<char>(in)), {});
-                const std::size_t at = json.find("\"source-path\"");
-                if (r.status == 0 && at != std::string::npos) {
-                    const std::size_t q1 = json.find('"', json.find(':', at) + 1), q2 = json.find('"', q1 + 1);
-                    std::filesystem::path src = json.substr(q1 + 1, q2 - q1 - 1);
-                    if (src.filename() == "std.cppm") std_cppm = (src.is_absolute() ? src : manifest.parent_path() / src).lexically_normal().string();
-                }
-            }
+            if (std_cppm.empty()) std_cppm = libcxx_std_cppm(cxx);  // the compiler's own manifest names it
             if (std_cppm.empty() || !std::filesystem::exists(std_cppm))
                 return std::unexpected("import std: no libc++ std.cppm (set toolchain.std_cppm, or use toolchain.sdk)");
             const std::string obj = build_dir_ + "/obj/std.o", pcm = bmis + "/std.pcm";
