@@ -40,7 +40,7 @@ SQD_OBJS  := $(foreach u,$(SQD_UNITS),$(BUILD)/obj/sq.data/$(call sqd_name,$(u))
 
 LUA_SRC := $(filter-out third_party/lua/lua.c third_party/lua/luac.c,$(wildcard third_party/lua/*.c))
 LUA_OBJ := $(LUA_SRC:third_party/lua/%.c=$(BUILD)/lua/%.o)
-MODULES := graph state run scan sha256 toolchain lua call
+MODULES := graph state cache run scan sha256 toolchain lua call
 OBJS    := $(BUILD)/obj/std.o $(MODULES:%=$(BUILD)/obj/%.o) $(BUILD)/liblua.a $(SQD_OBJS) $(BUILD)/obj/yyjson.o
 TESTS   := $(patsubst tests/%.cpp,$(BUILD)/%,$(wildcard tests/test_*.cpp))
 
@@ -89,12 +89,13 @@ $(BUILD)/pcm/sqmake.$(1).pcm $(BUILD)/obj/$(1).o &: src/$(1).cppm $(BUILD)/pcm/s
 endef
 $(eval $(call unit,graph,))
 $(eval $(call unit,state,))
-$(eval $(call unit,run,$(BUILD)/pcm/sqmake.graph.pcm $(BUILD)/pcm/sqmake.state.pcm))
+$(eval $(call unit,cache,$(BUILD)/pcm/sqmake.graph.pcm $(BUILD)/pcm/sqmake.sha256.pcm))
+$(eval $(call unit,run,$(BUILD)/pcm/sqmake.graph.pcm $(BUILD)/pcm/sqmake.state.pcm $(BUILD)/pcm/sqmake.cache.pcm))
 $(eval $(call unit,scan,))
 $(eval $(call unit,sha256,))
 $(eval $(call unit,toolchain,$(BUILD)/pcm/sqmake.run.pcm $(BUILD)/pcm/sqmake.sha256.pcm))
 $(eval $(call unit,lua,$(BUILD)/pcm/sqmake.graph.pcm $(BUILD)/pcm/sqmake.run.pcm $(BUILD)/pcm/sqmake.scan.pcm $(BUILD)/pcm/sqmake.toolchain.pcm))
-$(eval $(call unit,call,$(BUILD)/pcm/sqmake.lua.pcm $(BUILD)/pcm/sqmake.toolchain.pcm $(BUILD)/pcm/sq.data.pcm))
+$(eval $(call unit,call,$(BUILD)/pcm/sqmake.lua.pcm $(BUILD)/pcm/sqmake.toolchain.pcm $(BUILD)/pcm/sqmake.cache.pcm $(BUILD)/pcm/sq.data.pcm))
 
 $(BUILD)/sqmake: tools/sqmake.cpp $(OBJS)
 	$(CXX) $(CXXFLAGS) $< $(OBJS) $(LDFLAGS) -o $@

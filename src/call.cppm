@@ -27,6 +27,7 @@ export module sqmake.call;
 
 import std;
 import sq.data;
+import sqmake.cache;
 import sqmake.graph;
 import sqmake.state;
 import sqmake.run;
@@ -37,7 +38,7 @@ export namespace sqmake {
 
 using sq::data::JsonValue;
 
-inline constexpr std::string_view tool_version = "0.8.1";
+inline constexpr std::string_view tool_version = "0.9.0";
 
 namespace calldetail {
 
@@ -150,7 +151,7 @@ inline JsonValue describe() {
                                                         {"jobs", arg("integer", "commands at once (default: every core)")},
                                                         {"debug", arg("boolean", "the debug build (mode.debug, build/debug)")},
                                                         {"explain", arg("boolean", "run nothing; say what would run, and why")}})},
-                                   {"result", JsonValue("{ran, up_to_date, explained}")}})},
+                                   {"result", JsonValue("{ran, cached, up_to_date, explained}")}})},
              {"plan", JsonValue(O{{"summary", JsonValue("the targets a build needs, in order, with their commands")},
                                   {"args", JsonValue(O{{"dir", dir}, {"file", file}, {"goals", goals},
                                                        {"debug", arg("boolean", "the debug build")}})},
@@ -254,11 +255,12 @@ inline JsonValue call(const JsonValue& request) {
         return ok(JsonValue(JsonValue::Object{{"targets", JsonValue(std::move(targets))}, {"verbs", strings_json(said)}}));
     }
     State state = State::load(state_file);
-    Runner runner(graph, state, {.jobs = jobs, .explain = explain, .extra_hash = (*ctx)->fingerprint(), .out = stderr});
+    Runner runner(graph, state, {.jobs = jobs, .explain = explain, .extra_hash = (*ctx)->fingerprint(), .out = stderr, .cache = cache_dir()});
     auto result = runner.run(*plan);
     if (!result) return fail("build_failed", result.error());
     if (result->failed) return fail("build_failed", std::format("{} command(s) failed; their output is on stderr", result->failed));
     return ok(JsonValue(JsonValue::Object{{"ran", JsonValue(static_cast<std::int64_t>(result->ran))},
+                                          {"cached", JsonValue(static_cast<std::int64_t>(result->cached))},
                                           {"up_to_date", JsonValue(static_cast<std::int64_t>(result->up_to_date))},
                                           {"explained", JsonValue(explain)}}));
 }

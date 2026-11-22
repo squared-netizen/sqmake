@@ -29,6 +29,7 @@ extern "C" char** environ;
 export module sqmake.run;
 
 import std;
+import sqmake.cache;
 import sqmake.graph;
 import sqmake.state;
 
@@ -40,10 +41,12 @@ struct RunOptions {
     bool quiet = false;    // no progress lines
     std::string extra_hash;  // the toolchain's fingerprint, in every hash
     std::FILE* out = stdout;  // progress and commands' output (stderr under `call`)
+    std::string cache;        // the shared cache's folder (cache_dir()); empty: none
 };
 
 struct RunResult {
     std::size_t ran = 0, failed = 0, up_to_date = 0;
+    std::size_t cached = 0;  // of ran: put back from the cache, not run
 };
 
 /// One command's exit status and everything it wrote.
@@ -118,7 +121,8 @@ inline int run_attached(const std::vector<std::string>& argv, int out) {
 
 class Runner {
 public:
-    Runner(const Graph& graph, State& state, RunOptions options) : graph_(graph), state_(state), o_(std::move(options)) {}
+    Runner(const Graph& graph, State& state, RunOptions options)
+        : graph_(graph), state_(state), o_(std::move(options)), cache_(o_.cache) {}
 
     /// Builds the planned targets, in order where they depend on each other.
     std::expected<RunResult, std::string> run(const std::vector<std::size_t>& plan) {
@@ -167,6 +171,8 @@ public:
             Record rec{command_hash(t, o_.extra_hash), {}};
             if (!t.depfile.empty())
                 if (auto deps = read_depfile(t.depfile)) rec.deps = *deps;
+            cache_.forget(t.outputs);
+            if (!t.depfile.empty()) cache_.store(t, rec.hash, rec.deps);
             state_.set(t.outputs[0], std::move(rec));
             ++result.ran;
             done_.insert(i);
@@ -232,6 +238,22 @@ public:
                     for (const auto& next : t.command.then) std::println(o_.out, "    {}", quoted(next));
                     done_.insert(i);
                     ran[i] = true;
+                    continue;
+                }
+                // Made before, on this device, by the same command from the
+                // same inputs: put back from the cache.
+                if (const std::uint64_t hash = command_hash(t, o_.extra_hash); cache_.restore(t, hash)) {
+                    if (!o_.quiet)
+                        std::println(o_.out, "[{}/{}] {} (cached)", counter, total, t.description.empty() ? t.outputs[0] : t.description);
+                    Record rec{hash, {}};
+                    if (auto deps = read_depfile(t.depfile)) rec.deps = *deps;
+                    cache_.forget(t.outputs);
+                    state_.set(t.outputs[0], std::move(rec));
+                    ++result.ran;
+                    ++result.cached;
+                    done_.insert(i);
+                    ran[i] = true;
+                    state_.save();
                     continue;
                 }
                 if (!o_.quiet) std::println(o_.out, "[{}/{}] {}", counter, total, t.description.empty() ? t.outputs[0] : t.description);
@@ -309,6 +331,7 @@ private:
     const Graph& graph_;
     State& state_;
     RunOptions o_;
+    Cache cache_;
     std::set<std::size_t> done_;
 };
 
