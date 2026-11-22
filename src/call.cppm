@@ -38,7 +38,7 @@ export namespace sqmake {
 
 using sq::data::JsonValue;
 
-inline constexpr std::string_view tool_version = "0.9.0";
+inline constexpr std::string_view tool_version = "0.9.1";
 
 namespace calldetail {
 
@@ -259,6 +259,7 @@ inline JsonValue call(const JsonValue& request) {
     auto result = runner.run(*plan);
     if (!result) return fail("build_failed", result.error());
     if (result->failed) return fail("build_failed", std::format("{} command(s) failed; their output is on stderr", result->failed));
+    static_cast<void>(prune_cache(cache_dir(), cache_limit()));
     return ok(JsonValue(JsonValue::Object{{"ran", JsonValue(static_cast<std::int64_t>(result->ran))},
                                           {"cached", JsonValue(static_cast<std::int64_t>(result->cached))},
                                           {"up_to_date", JsonValue(static_cast<std::int64_t>(result->up_to_date))},

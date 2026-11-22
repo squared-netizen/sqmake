@@ -482,7 +482,12 @@ sleep 1
 printf 'inline const char* greeting() { return "cached hello"; }\n' > cc/shared/greet.h
 (cd cc/two && SQMAKE_CACHE=$PWD/../cache "$sqmake" > out.txt 2>&1) && grep -q 'greet.cpp (cached)' cc/two/out.txt &&
     [ "$(cc/two/build/hello)" = "cached hello" ] || die "a header changed back missed the cache: $(cat cc/two/out.txt)"
-ok "the shared cache: a second workspace compiles nothing; a changed header is compiled, not taken"
+(cd cc/two && SQMAKE_CACHE=$PWD/../cache SQMAKE_CACHE_SIZE=0 "$sqmake" > out.txt 2>&1) &&
+    grep -q 'the cache pruned' cc/two/out.txt || die "a cache over its size not pruned: $(cat cc/two/out.txt)"
+rm -rf cc/two/build
+(cd cc/two && SQMAKE_CACHE=$PWD/../cache "$sqmake" > out.txt 2>&1) && ! grep -q '(cached)' cc/two/out.txt ||
+    die "a pruned cache still gave compiles: $(cat cc/two/out.txt)"
+ok "the shared cache: a second workspace compiles nothing; a changed header is compiled, not taken; pruned to its size"
 
 "$sqmake" clean > /dev/null
 [ ! -e build/hello ] && [ ! -e build/.sqmake/state ] || die "clean left files"

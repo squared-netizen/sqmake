@@ -140,5 +140,7 @@ int main(int argc, char** argv) {
     if (result->failed) return 1;
     if (!explain && result->ran == 0) std::println("sqmake: up to date");
     if (result->cached > 0) std::println("sqmake: {} of {} from the cache", result->cached, result->ran);
+    if (const std::size_t gone = sqmake::prune_cache(sqmake::cache_dir(), sqmake::cache_limit()); gone > 0)
+        std::println("sqmake: the cache pruned: {} entries used longest ago removed", gone);
     return 0;
 }
