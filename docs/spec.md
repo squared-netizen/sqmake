@@ -314,6 +314,31 @@ Design patterns: **Command** (each step: hashable, loggable, printable by
 apart from the scheduler), **Builder** (Lua's registration of targets and
 rules), **Factory** (`Context::create`).
 
+### 6.3 The shared cache (decided 2026-11-22, 0.9.0)
+
+Compiles are shared between builds on one device. A target that writes a
+dependency file says exactly what it read, so its outputs are kept in a
+cache under a key of its command (which carries the toolchain's
+fingerprint) and its inputs' contents, with the list of what it read and
+each file's sha256. A build anywhere on the device running the same
+command over the same inputs, whose headers still hash the same, takes
+the outputs from there: `[n/N] cxx ... (cached)`, and at the end `M of N
+from the cache`. A header changed is compiled again; changed back, it is
+the cache's once more.
+
+So the commands must be the same in every workspace: they name the build
+folder as the build file does (relative; every command runs in the build
+file's folder), the toolchain's resource directory included. A framework
+installed once (squared's, `$PREFIX/share/squared/VERSION`) is then
+compiled once a device: sqterm's APK in a second workspace took 423 of
+449 steps from the cache (2 s, against 19 s), its library byte for byte
+the first's.
+
+The cache is `$SQMAKE_CACHE`, else `$PREFIX/var/cache/sqmake` (sqterm's),
+else `~/.cache/sqmake`; `SQMAKE_CACHE=off` is none. Entries are written
+whole, beside, then renamed into place, so builds at once never see half
+of one. Not yet: pruning it (one APK's worth is about 70 MB).
+
 ## 7. The library and the command line
 
 ### 7.1 Packaging (decided)

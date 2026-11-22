@@ -24,6 +24,7 @@
 #include <stdio.h>  // stdout, stderr: macros, not in the std module
 
 import std;
+import sqmake.cache;
 import sqmake.graph;
 import sqmake.state;
 import sqmake.run;
@@ -133,10 +134,11 @@ int main(int argc, char** argv) {
     auto plan = graph.plan(goals);
     if (!plan) return fail(plan.error());
     sqmake::State state = sqmake::State::load(state_file);
-    sqmake::Runner runner(graph, state, {.jobs = jobs, .explain = explain, .extra_hash = (*ctx)->fingerprint()});
+    sqmake::Runner runner(graph, state, {.jobs = jobs, .explain = explain, .extra_hash = (*ctx)->fingerprint(), .cache = sqmake::cache_dir()});
     auto result = runner.run(*plan);
     if (!result) return fail(result.error());
     if (result->failed) return 1;
     if (!explain && result->ran == 0) std::println("sqmake: up to date");
+    if (result->cached > 0) std::println("sqmake: {} of {} from the cache", result->cached, result->ran);
     return 0;
 }

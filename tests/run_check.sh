@@ -21,6 +21,9 @@
 #
 # CXX is the compiler (clang++ by default).
 set -euo pipefail
+# The shared cache is off for every test but its own: each test says what
+# it builds, and a compile put back from ~/.cache would not be one.
+export SQMAKE_CACHE=off
 
 sqmake=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 work=$(mktemp -d)
@@ -441,6 +444,45 @@ printf 'exec{"true"}\n' > vb/bad.lua
 (cd vb && "$sqmake" -f bad.lua > out.txt 2>&1) && die "exec ran while the build file was read"
 grep -q 'exec: only inside a verb' vb/out.txt || die "exec outside a call: $(cat vb/out.txt)"
 ok "verbs: the build file's, the last said wins; call and exec; --debug and .sqmake.lua; unsaid verbs and misuse said"
+
+# The shared cache: two workspaces compiling the same sources (one copy at
+# one path, as an installed squared) by the same command: the second takes
+# every compile from the cache and its program runs; a header changed is
+# compiled again, not taken; changed back, it is the cache's once more.
+mkdir -p cc/shared cc/one cc/two
+cat > cc/shared/greet.h <<'C'
+inline const char* greeting() { return "cached hello"; }
+C
+cat > cc/shared/greet.cpp <<'C'
+#include "greet.h"
+const char* greet() { return greeting(); }
+C
+for w in one two; do
+  cat > cc/$w/main.cpp <<'C'
+#include <cstdio>
+const char* greet();
+int main() { std::puts(greet()); }
+C
+  cat > cc/$w/build.lua <<L
+toolchain.cxxflags = {"-std=c++23", "-O1"}
+exe("hello", map({"$PWD/cc/shared/greet.cpp", "main.cpp"}, rules.cxx))
+L
+done
+(cd cc/one && SQMAKE_CACHE=$PWD/../cache "$sqmake" > out.txt 2>&1) || die "the cache, first workspace: $(cat cc/one/out.txt)"
+! grep -q '(cached)' cc/one/out.txt || die "an empty cache gave a compile: $(cat cc/one/out.txt)"
+(cd cc/two && SQMAKE_CACHE=$PWD/../cache "$sqmake" > out.txt 2>&1) || die "the cache, second workspace: $(cat cc/two/out.txt)"
+[ "$(grep -c '(cached)' cc/two/out.txt)" = 2 ] && grep -q '2 of 3 from the cache' cc/two/out.txt ||
+    die "the second workspace compiled what the cache had: $(cat cc/two/out.txt)"
+[ "$(cc/two/build/hello)" = "cached hello" ] || die "a program from cached objects says $(cc/two/build/hello)"
+sleep 1
+printf 'inline const char* greeting() { return "changed"; }\n' > cc/shared/greet.h
+(cd cc/two && SQMAKE_CACHE=$PWD/../cache "$sqmake" > out.txt 2>&1) && ! grep -q 'greet.cpp (cached)' cc/two/out.txt &&
+    [ "$(cc/two/build/hello)" = changed ] || die "a changed header was taken from the cache: $(cat cc/two/out.txt)"
+sleep 1
+printf 'inline const char* greeting() { return "cached hello"; }\n' > cc/shared/greet.h
+(cd cc/two && SQMAKE_CACHE=$PWD/../cache "$sqmake" > out.txt 2>&1) && grep -q 'greet.cpp (cached)' cc/two/out.txt &&
+    [ "$(cc/two/build/hello)" = "cached hello" ] || die "a header changed back missed the cache: $(cat cc/two/out.txt)"
+ok "the shared cache: a second workspace compiles nothing; a changed header is compiled, not taken"
 
 "$sqmake" clean > /dev/null
 [ ! -e build/hello ] && [ ! -e build/.sqmake/state ] || die "clean left files"

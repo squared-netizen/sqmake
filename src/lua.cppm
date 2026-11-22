@@ -845,7 +845,10 @@ private:
             if (!description) return luaL_error(L, "%s", description.error().c_str());
             auto t = resolve_toolchain(*description);
             if (!t) return luaL_error(L, "toolchain (%s): %s", file.c_str(), t.error().c_str());
-            const std::string dir = std::filesystem::absolute(build).string();
+            // The build folder as the build file names it (relative: every
+            // command runs in the build file's folder), so the commands are
+            // the same in every workspace, and the shared cache's (§6.3).
+            const std::string dir = build;
             if (auto made = make_resource_dir(*t, dir); !made) return luaL_error(L, "toolchain: %s", made.error().c_str());
             lua_createtable(L, 0, 6);
             list(t->cxx(dir));
