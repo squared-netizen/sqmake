@@ -2,12 +2,16 @@
 //
 // sqmake: the squared SDK's build system (docs/spec.md).
 //
-//   sqmake [-C DIR] [-f FILE] [-j N] [--explain] [GOAL...]
+//   sqmake [-C DIR] [-f FILE] [-j N] [--debug] [--explain] [GOAL...]
 //                      build.lua (or FILE) in DIR read, and the goals (or
 //                      its defaults) built: what is out of date, N at once
-//                      (every core by default). --explain prints each
+//                      (every core by default). A goal is a file, a verb
+//                      (build, run, install, test: what each does is the
+//                      build file's) or an action. --debug: the debug build
+//                      (mode.debug; in build/debug unless .sqmake.lua says
+//                      separate_debug = false). --explain prints each
 //                      command that would run and why, and runs nothing.
-//   sqmake clean [-C DIR] [-f FILE]
+//   sqmake clean [-C DIR] [-f FILE] [--debug]
 //                      every output build.lua names removed, and the state
 //   sqmake toolchain [FILE]
 //                      the SDK's toolchain (FILE: squared/build/toolchain.lua)
@@ -33,8 +37,9 @@ namespace {
 constexpr std::string_view version = sqmake::tool_version;
 
 int usage(std::FILE* out = stderr, int status = 2) {
-    std::println(out, "usage: sqmake [-C DIR] [-f FILE] [-j N] [--explain] [GOAL...]\n"
-                      "       sqmake clean [-C DIR] [-f FILE]\n"
+    std::println(out, "usage: sqmake [-C DIR] [-f FILE] [-j N] [--debug] [--explain] [GOAL...]\n"
+                      "       sqmake clean [-C DIR] [-f FILE] [--debug]\n"
+                      "GOAL: a file the build makes, a verb (build, run, install, test) or an action\n"
                       "       sqmake toolchain [FILE]\n"
                       "       sqmake call < REQUEST.json\n"
                       "       sqmake describe\n"
@@ -83,7 +88,7 @@ int main(int argc, char** argv) {
     }
     std::string dir, file = "build.lua";
     std::size_t jobs = std::max(1U, std::thread::hardware_concurrency());
-    bool explain = false, clean = false;
+    bool explain = false, clean = false, debug = false;
     std::vector<std::string> goals;
     for (std::size_t i = 0; i < args.size(); ++i) {
         const std::string_view a = args[i];
@@ -96,6 +101,7 @@ int main(int argc, char** argv) {
         } else if (a.starts_with("-j") && a.size() > 2) {
             if (std::from_chars(a.data() + 2, a.data() + a.size(), jobs).ec != std::errc() || jobs == 0) return fail("-j: a number, 1 or more");
         } else if (a == "--explain") explain = true;
+        else if (a == "--debug") debug = true;
         else if (a == "clean" && goals.empty() && !clean) clean = true;
         else if (a.starts_with("-")) return usage();
         else goals.emplace_back(a);
@@ -105,7 +111,7 @@ int main(int argc, char** argv) {
         std::filesystem::current_path(dir, ec);
         if (ec) return fail("cannot enter " + dir);
     }
-    auto ctx = sqmake::Context::create({});
+    auto ctx = sqmake::Context::create({.debug = debug});
     if (!ctx) return fail(ctx.error());
     if (auto loaded = (*ctx)->load(file); !loaded) return fail(loaded.error());
     sqmake::Graph& graph = (*ctx)->graph();
@@ -114,7 +120,7 @@ int main(int argc, char** argv) {
     if (clean) {
         std::size_t removed = 0;
         for (const sqmake::Target& t : graph.targets()) {
-            if (t.command.argv.empty() || t.action) continue;  // an action's name is no file
+            if (t.alias() || t.action) continue;  // an action's name is no file
             for (const std::string& o : t.outputs) removed += std::filesystem::remove(o, ec) ? 1 : 0;
             if (!t.depfile.empty()) std::filesystem::remove(t.depfile, ec);
         }

@@ -37,7 +37,7 @@ export namespace sqmake {
 
 using sq::data::JsonValue;
 
-inline constexpr std::string_view tool_version = "0.7.1";
+inline constexpr std::string_view tool_version = "0.8.0";
 
 namespace calldetail {
 
@@ -148,13 +148,15 @@ inline JsonValue describe() {
                                                         {"file", file},
                                                         {"goals", goals},
                                                         {"jobs", arg("integer", "commands at once (default: every core)")},
+                                                        {"debug", arg("boolean", "the debug build (mode.debug, build/debug)")},
                                                         {"explain", arg("boolean", "run nothing; say what would run, and why")}})},
                                    {"result", JsonValue("{ran, up_to_date, explained}")}})},
              {"plan", JsonValue(O{{"summary", JsonValue("the targets a build needs, in order, with their commands")},
-                                  {"args", JsonValue(O{{"dir", dir}, {"file", file}, {"goals", goals}})},
-                                  {"result", JsonValue("{targets: [{outputs, inputs, command, description, action}]}")}})},
+                                  {"args", JsonValue(O{{"dir", dir}, {"file", file}, {"goals", goals},
+                                                       {"debug", arg("boolean", "the debug build")}})},
+                                  {"result", JsonValue("{targets: [{outputs, inputs, command, description, action}], verbs}")}})},
              {"clean", JsonValue(O{{"summary", JsonValue("remove the build file's outputs and the state")},
-                                   {"args", JsonValue(O{{"dir", dir}, {"file", file}})},
+                                   {"args", JsonValue(O{{"dir", dir}, {"file", file}, {"debug", arg("boolean", "the debug build's")}})},
                                    {"result", JsonValue("{removed}")}})},
              {"toolchain", JsonValue(O{{"summary", JsonValue("the SDK's toolchain found here: each part, where, and the fingerprint")},
                                        {"args", JsonValue(O{{"dir", dir},
@@ -186,6 +188,7 @@ inline JsonValue call(const JsonValue& request) {
     std::vector<std::string> goals = a.strings("goals");
     const std::size_t jobs = a.count("jobs", std::max(1U, std::thread::hardware_concurrency()));
     const bool explain = a.boolean("explain", false);
+    const bool debug = a.boolean("debug", false);
     if (!a.error.empty()) return fail("bad_request", a.error);
     if (*command == "toolchain") {
         InDir in(dir);
@@ -212,7 +215,7 @@ inline JsonValue call(const JsonValue& request) {
 
     InDir in(dir);
     if (!in.ok()) return fail("no_dir", "cannot enter " + dir);
-    auto ctx = Context::create({});
+    auto ctx = Context::create({.debug = debug, .out = 2});
     if (!ctx) return fail("load_failed", ctx.error());
     if (auto loaded = (*ctx)->load(file); !loaded) return fail("load_failed", loaded.error());
     Graph& graph = (*ctx)->graph();
@@ -222,7 +225,7 @@ inline JsonValue call(const JsonValue& request) {
         std::error_code ec;
         std::int64_t removed = 0;
         for (const Target& t : graph.targets()) {
-            if (t.command.argv.empty() || t.action) continue;  // an action's name is no file
+            if (t.alias() || t.action) continue;  // an action's name is no file
             for (const std::string& o : t.outputs) removed += std::filesystem::remove(o, ec) ? 1 : 0;
             if (!t.depfile.empty()) std::filesystem::remove(t.depfile, ec);
         }
@@ -243,7 +246,12 @@ inline JsonValue call(const JsonValue& request) {
                                                    {"description", JsonValue(t.description)},
                                                    {"action", JsonValue(t.action)}});
         }
-        return ok(JsonValue(JsonValue::Object{{"targets", JsonValue(std::move(targets))}}));
+        // The verbs this build file says what to do for (build always: its
+        // defaults), so a tool can offer them.
+        std::vector<std::string> said;
+        for (std::string_view v : verbs)
+            if (graph.maker(std::string(v))) said.emplace_back(v);
+        return ok(JsonValue(JsonValue::Object{{"targets", JsonValue(std::move(targets))}, {"verbs", strings_json(said)}}));
     }
     State state = State::load(state_file);
     Runner runner(graph, state, {.jobs = jobs, .explain = explain, .extra_hash = (*ctx)->fingerprint(), .out = stderr});

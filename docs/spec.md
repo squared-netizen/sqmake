@@ -156,6 +156,44 @@ its own, `public.flags` its users' too (and its own), `public.link` its
 users' links'; its archive comes before its dependencies' on every link that
 uses it, so a static link finds every symbol.
 
+### 3.4 Verbs and the debug build (decided 2026-11-21, 0.8.0)
+
+Every project answers the same few words, so a person, an editor or
+sqgui never learns a project's own: `sqmake build`, `run`, `install`,
+`test`, and sqmake's own `clean`. sqmake fixes what each means, not what
+it does:
+
+| verb | means |
+|---|---|
+| build | the product made (the build file's defaults), then its own step if it says one |
+| install | the product put where it is used |
+| run | the product started (installed first where that is how it runs) |
+| test | the project's tests run |
+| clean | what the build made removed (sqmake's own) |
+
+What each does is said, in Lua, by whatever knows: a platform file
+(squared's build/android.lua: install through the device, run through
+the launcher), the template, or the build file; the last to say wins, so
+a project overrides its platform with one line:
+
+```lua
+verb("install", {needs = {apk}, cmd = {device, "install", apk}})
+verb("test", {needs = {tests}, call = function(m) return exec{"build/tests"} end})
+```
+
+`cmd` or `cmds` is the usual way; `call` is the escape hatch, a Lua
+function run when the verb runs, given `mode`, with `exec()` for commands
+(only there: a build file never runs a command while it is read), its
+status the verb's. A verb nothing says is an error naming the verb. A
+project's own words (Android's `logcat`, `devices`) stay `action{}`,
+which may not take a verb's name. sqmake knows no platform.
+
+`--debug`, on any verb, is the debug build: `mode = {debug, name}` for
+the build file, which says what that is (squared's template: the
+Console, DEV_LOG, a debuggable APK). It builds in `build/debug`, so
+switching never rebuilds the other; a project opts out in `.sqmake.lua`
+beside the build file (values only): `separate_debug = false`.
+
 ## 4. Toolchains
 
 ### 4.1 One toolchain, defined once (decided)

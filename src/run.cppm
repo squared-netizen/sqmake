@@ -146,7 +146,7 @@ public:
         std::condition_variable cv;
         std::vector<std::pair<std::size_t, Ran>> finished;
         std::vector<std::jthread> threads;
-        const std::size_t total = std::ranges::count_if(plan, [&](std::size_t i) { return !graph_.at(i).command.argv.empty(); });
+        const std::size_t total = std::ranges::count_if(plan, [&](std::size_t i) { return !graph_.at(i).alias(); });
         std::size_t counter = 0;
 
         auto ready = [&](std::size_t i) {
@@ -197,7 +197,7 @@ public:
                     done_.insert(i);
                     continue;
                 }
-                if (t.command.argv.empty()) {  // an alias: its inputs are its work
+                if (t.alias()) {  // an alias: its inputs are its work
                     done_.insert(i);
                     ran[i] = true;
                     continue;
@@ -206,7 +206,7 @@ public:
                     ++counter;
                     if (!o_.quiet) std::println(o_.out, "[{}/{}] {}", counter, total, t.description.empty() ? t.outputs[0] : t.description);
                     std::fflush(o_.out);
-                    int status = run_attached(t.command.argv, ::fileno(o_.out));
+                    int status = t.call ? t.call() : run_attached(t.command.argv, ::fileno(o_.out));
                     for (const auto& next : t.command.then) {
                         if (status != 0) break;
                         status = run_attached(next, ::fileno(o_.out));
@@ -214,7 +214,8 @@ public:
                     if (status != 0) {
                         ++result.failed;
                         stopped = true;
-                        std::println(o_.out, "sqmake: {} failed (status {}): {}", t.outputs[0], status, quoted(t.command.argv));
+                        std::println(o_.out, "sqmake: {} failed (status {}){}", t.outputs[0], status,
+                                     t.call ? "" : ": " + quoted(t.command.argv));
                         break;
                     }
                     ++result.ran;
@@ -227,7 +228,7 @@ public:
                 if (o_.explain) {
                     ++result.ran;  // with explain: what would run
                     std::println(o_.out, "[{}/{}] {}\n    because {}\n    {}", counter, total, t.description.empty() ? t.outputs[0] : t.description, reason,
-                                 quoted(t.command.argv));
+                                 t.call ? std::string("(the build file's Lua)") : quoted(t.command.argv));
                     for (const auto& next : t.command.then) std::println(o_.out, "    {}", quoted(next));
                     done_.insert(i);
                     ran[i] = true;
@@ -277,7 +278,7 @@ private:
     std::string out_of_date(std::size_t i, const std::map<std::size_t, bool>& ran) const {
         const Target& t = graph_.at(i);
         if (t.action) return "it is an action: it runs whenever asked for";
-        if (t.command.argv.empty()) {
+        if (t.alias()) {
             for (const std::string& in : t.inputs)
                 if (auto m = graph_.maker(in); m && ran.contains(*m)) return "an input was built";
             return "";

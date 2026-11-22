@@ -39,8 +39,9 @@ local greet = library{name = "greet", srcs = glob("greet/src/*.cpp"),
 local so = shlib{name = "game", srcs = glob("src/*.cpp"), deps = {greet}}
 local game = apk{name = "game", manifest = "sq_android/AndroidManifest.xml", res = "sq_android/res",
                  assets = "sq_android/assets", files = {{"lib/arm64-v8a/libgame.so", so}}}
--- `sqmake install`: built first, then this command, attached to the terminal.
-action{name = "install", needs = {game}, cmd = {"mydevicetool", "install", game}}
+-- `sqmake install` (a verb: every project's same word; what it does is said here,
+-- or by a platform file): built first, then this command, attached to the terminal.
+verb("install", {needs = {game}, cmd = {"mydevicetool", "install", game}})
 ```
 
 Each source's `export module` / `import` lines order the compiles; BMIs go
