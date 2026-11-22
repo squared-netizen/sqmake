@@ -102,6 +102,10 @@ include("sq/build/template.lua")
 - `write_file(path, text)` (0.6.0): a generated file written while the build
   file runs, and only when its content changes (so what reads it is not
   rebuilt for nothing); squared's asset index is one.
+- `read_file(path [, max_bytes])` (0.8.1): a file's text, at most
+  max_bytes of it, or nil: state a build keeps for itself beside what it
+  makes (squared's Console bridge: its port and secret, made once), or
+  bytes from /dev/urandom.
 - `toolchain.sdk()`'s table also says where the toolchain's parts are
   (`sysroot`, `runtimes`, `llvm_bin`, `target`), for what a build file names
   by path: Android's libraries in the sysroot, llvm-objcopy.

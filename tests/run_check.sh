@@ -336,6 +336,21 @@ touch wf/in/c
 (cd wf && "$sqmake" > out.txt 2>&1) && grep -q 'in/c' wf/build/copy.txt || die "write_file: a new file not listed: $(cat wf/out.txt)"
 ok "write_file: written when it changes, and only then"
 
+# read_file: a file's text, at most max bytes of it, or nil.
+mkdir -p rf
+cat > rf/build.lua <<'L'
+local kept = read_file("kept.txt")
+if not kept then write_file("kept.txt", "first\n") end
+assert(read_file("kept.txt") == "first\n", "read_file: what write_file wrote")
+assert(read_file("missing.txt") == nil, "read_file: nil for a file that is not there")
+assert(#read_file("/dev/urandom", 16) == 16, "read_file: 16 bytes of /dev/urandom")
+assert(read_file("kept.txt", 3) == "fir", "read_file: at most max bytes")
+target{out = "build/x", ins = {"kept.txt"}, cmd = {"cp", "kept.txt", "build/x"}}
+default("build/x")
+L
+(cd rf && "$sqmake" > out.txt 2>&1) || die "read_file: $(cat rf/out.txt)"
+ok "read_file: a file's text, at most max bytes, nil when missing"
+
 # A generated source and header (as sqgen's): the generator runs first, the
 # compiles that include its header wait for it, and the generated source's
 # imports (given, as it is not there to read) order it after the module.
@@ -378,6 +393,7 @@ default("build/app.txt")
 verb("install", {needs = {"build/app.txt"}, desc = "install app.txt",
                  cmds = {{"cp", "build/app.txt", "installed.txt"}, {"sh", "-c", "echo installed $WHERE; read line; echo got $line"}}})
 action{name = "broken", cmd = {"false"}}
+action{name = "said", call = function(m) return exec{"echo", "an action's call, " .. m.name} end}
 L
 (cd act && "$sqmake" > out.txt 2>&1) && [ ! -e act/installed.txt ] || die "an action ran as a default: $(cat act/out.txt)"
 (cd act && echo yes | WHERE=here "$sqmake" install > out.txt 2>&1) || die "the install action: $(cat act/out.txt)"
@@ -386,11 +402,12 @@ grep -q 'installed here' act/out.txt && grep -q 'got yes' act/out.txt && [ -f ac
 rm act/installed.txt
 (cd act && echo no | "$sqmake" install > out.txt 2>&1) && [ -f act/installed.txt ] && ! grep -q 'cp build.lua' act/out.txt ||
     die "an action again (once more, with nothing to build): $(cat act/out.txt)"
+(cd act && "$sqmake" said > out.txt 2>&1) && grep -q "an action's call, release" act/out.txt || die "an action's call: $(cat act/out.txt)"
 (cd act && "$sqmake" broken > out.txt 2>&1) && die "a failing action succeeded"
 grep -q 'broken failed' act/out.txt || die "a failing action's message: $(cat act/out.txt)"
 (cd act && "$sqmake" clean > out.txt 2>&1) && [ ! -e act/build/app.txt ] || die "clean with an action: $(cat act/out.txt)"
 (cd act && "$sqmake" instal > out.txt 2>&1) && die "an unknown goal succeeded"
-grep -q 'no target makes instal (a goal is a file the build makes, a verb (build, install), or an action: broken)' act/out.txt ||
+grep -q 'no target makes instal (a goal is a file the build makes, a verb (build, install), or an action: broken, said)' act/out.txt ||
     die "an unknown goal does not list the verbs and actions: $(cat act/out.txt)"
 ok "verbs and actions: after what they need, each time, attached, never a default or a file; listed for an unknown goal"
 

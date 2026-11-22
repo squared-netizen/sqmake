@@ -21,6 +21,7 @@
 //   default(name, ...)    what `sqmake` builds when given no goal
 //   write_file(path, text)  the file holds the text (written only when it
 //                         differs): a list the build derives
+//   read_file(path [, max])  its text (at most max bytes), or nil
 //   include(path)         another Lua file run in this environment (a
 //                         template's or a kit's conventions); what it
 //                         returns
@@ -223,7 +224,7 @@ end
 -- Android app's native library); built by default.
 function shlib(t) return linked(t, "shlib") end
 
--- action{name=, needs={...}, cmd={...} or cmds={{...}, ...}, desc=}: a
+-- action{name=, needs={...}, cmd={...} or cmds={{...}, ...} or call=, desc=}: a
 -- named command (`sqmake install`), run each time a goal names it, after
 -- what it needs is built, attached to the terminal. Never a default. What
 -- it does is the build file's: sqmake only runs it.
@@ -232,7 +233,7 @@ function action(t)
   if verb_names[name] then
     error("action: " .. name .. " is one of sqmake's verbs: verb(\"" .. name .. "\", {...}) says what it does", 2)
   end
-  target{out = name, ins = t.needs or {}, cmd = t.cmd, cmds = t.cmds, desc = t.desc or name, action = true}
+  target{out = name, ins = t.needs or {}, cmd = t.cmd, cmds = t.cmds, call = t.call, desc = t.desc or name, action = true}
   return name
 end
 
@@ -378,6 +379,7 @@ public:
         api("include", &Context::l_include);
         api("write_file", &Context::l_write_file);
         api("exec", &Context::l_exec);
+        api("read_file", &Context::l_read_file);
         api("defaults", &Context::l_defaults);
         for (const char* lib : {"string", "table", "math", "utf8"}) {
             lua_getglobal(L, lib);
@@ -680,6 +682,30 @@ private:
         std::vector<std::string> flags;  // its own: a library's include folders and defines
         std::vector<std::string> after;  // files it waits for: generated headers
     };
+
+    /// read_file(path [, max_bytes]): the file's text (at most max_bytes of
+    /// it), or nil when it cannot be read: state a build keeps for itself
+    /// (a bridge's port and secret), or bytes from /dev/urandom.
+    static int l_read_file(lua_State* L) {
+        const char* path = luaL_checkstring(L, 1);
+        const lua_Integer max = luaL_optinteger(L, 2, -1);
+        if (lua_gettop(L) >= 2 && max < 0) return luaL_error(L, "read_file: max_bytes is 0 or more");
+        std::ifstream in(path, std::ios::binary);
+        if (!in) {
+            lua_pushnil(L);
+            return 1;
+        }
+        std::string text;
+        if (max >= 0) {
+            text.resize(static_cast<std::size_t>(max));
+            in.read(text.data(), max);
+            text.resize(static_cast<std::size_t>(in.gcount()));
+        } else {
+            text.assign(std::istreambuf_iterator<char>(in), {});
+        }
+        lua_pushlstring(L, text.data(), text.size());
+        return 1;
+    }
 
     /// write_file(path, text): the file holds the text, written now and only
     /// when it differs (so what depends on it is not rebuilt for nothing): a
