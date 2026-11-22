@@ -224,7 +224,7 @@ end
 -- Android app's native library); built by default.
 function shlib(t) return linked(t, "shlib") end
 
--- action{name=, needs={...}, cmd={...} or cmds={{...}, ...}, desc=}: a
+-- action{name=, needs={...}, cmd={...} or cmds={{...}, ...} or call=, desc=}: a
 -- named command (`sqmake install`), run each time a goal names it, after
 -- what it needs is built, attached to the terminal. Never a default. What
 -- it does is the build file's: sqmake only runs it.
@@ -233,7 +233,7 @@ function action(t)
   if verb_names[name] then
     error("action: " .. name .. " is one of sqmake's verbs: verb(\"" .. name .. "\", {...}) says what it does", 2)
   end
-  target{out = name, ins = t.needs or {}, cmd = t.cmd, cmds = t.cmds, desc = t.desc or name, action = true}
+  target{out = name, ins = t.needs or {}, cmd = t.cmd, cmds = t.cmds, call = t.call, desc = t.desc or name, action = true}
   return name
 end
 
