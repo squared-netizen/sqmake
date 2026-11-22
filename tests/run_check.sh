@@ -489,6 +489,23 @@ rm -rf cc/two/build
     die "a pruned cache still gave compiles: $(cat cc/two/out.txt)"
 ok "the shared cache: a second workspace compiles nothing; a changed header is compiled, not taken; pruned to its size"
 
+# sqmake std: import std for a hand build, made once for $CXX and the flags
+# and kept in the shared cache's std/. -stdlib=libc++ as the other tests
+# give it: libc++ is not every clang's default (it is sqterm's).
+mkdir -p hand && printf 'import std;\nint main() { std::println("by hand"); }\n' > hand/hello.cpp
+args=$(cd hand && SQMAKE_CACHE=$PWD/../stdcache "$sqmake" std -std=c++23 -stdlib=libc++ 2> made.txt) || die "sqmake std: $(cat hand/made.txt)"
+grep -q 'std built' hand/made.txt || die "sqmake std did not say it built std"
+# shellcheck disable=SC2086 # words: the flags and the object
+(cd hand && $CXX -std=c++23 -stdlib=libc++ $args hello.cpp -o hello) && [ "$(hand/hello)" = "by hand" ] ||
+    die "a hand build with sqmake std's arguments: $args"
+again=$(cd hand && SQMAKE_CACHE=$PWD/../stdcache "$sqmake" std -std=c++23 -stdlib=libc++ 2> made.txt)
+[ "$again" = "$args" ] && ! grep -q 'std built' hand/made.txt || die "sqmake std built std again for the same flags"
+[ "$(cd hand && SQMAKE_CACHE=$PWD/../stdcache "$sqmake" std --compile -std=c++23 -stdlib=libc++ 2>/dev/null)" = "${args%% *}" ] ||
+    die "sqmake std --compile printed more than the module"
+other=$(cd hand && SQMAKE_CACHE=$PWD/../stdcache "$sqmake" std -std=c++26 -stdlib=libc++ 2>/dev/null)
+[ "$other" != "$args" ] || die "sqmake std gave one module for two -std"
+ok "sqmake std: import std for a hand build, made once for the flags, another for other flags"
+
 "$sqmake" clean > /dev/null
 [ ! -e build/hello ] && [ ! -e build/.sqmake/state ] || die "clean left files"
 ok "clean: outputs and state gone"

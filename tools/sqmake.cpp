@@ -42,6 +42,7 @@ int usage(std::FILE* out = stderr, int status = 2) {
                       "       sqmake clean [-C DIR] [-f FILE] [--debug]\n"
                       "GOAL: a file the build makes, a verb (build, run, install, test) or an action\n"
                       "       sqmake toolchain [FILE]\n"
+                      "       sqmake std [--compile | --link] [FLAGS...]   import std for a hand build\n"
                       "       sqmake call < REQUEST.json\n"
                       "       sqmake describe\n"
                       "       sqmake --help | --version");
@@ -66,6 +67,39 @@ int main(int argc, char** argv) {
         auto text = sq::data::write_json(sqmake::describe(), {.pretty = true, .newline_at_end = true});
         std::print("{}", text.text);
         return text ? 0 : 1;
+    }
+    if (!args.empty() && args[0] == "std") {
+        // import std for a build by hand: the module and its object, made once
+        // for $CXX and these flags (kept in the shared cache, std/), and the
+        // arguments that use them printed for the compiler's command line:
+        //   clang++ -std=c++23 $(sqmake std -std=c++23) hello.cpp -o hello
+        bool compile = true, link = true;
+        std::vector<std::string> flags;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--compile") link = false;
+            else if (args[i] == "--link") compile = false;
+            else flags.emplace_back(args[i]);
+        }
+        std::vector<std::string> cxx;
+        const char* env = std::getenv("CXX");
+        const std::string words = env != nullptr && *env != '\0' ? env : "clang++";
+        for (std::size_t i = 0; i < words.size();) {
+            const std::size_t start = words.find_first_not_of(' ', i);
+            if (start == std::string::npos) break;
+            const std::size_t end = words.find(' ', start);
+            cxx.push_back(words.substr(start, end - start));
+            i = end == std::string::npos ? words.size() : end;
+        }
+        std::string dir = sqmake::cache_dir();
+        dir = dir.empty() ? std::string("build/std") : dir + "/std";
+        const auto m = sqmake::std_module(cxx, flags, sqmake::libcxx_std_cppm(cxx), dir);
+        if (!m) return fail(m.error());
+        if (m->built) std::println(stderr, "sqmake: std built for {}: {}", flags.empty() ? "no flags" : "these flags", m->pcm);
+        std::string out;
+        if (compile) out += "-fmodule-file=std=" + m->pcm;
+        if (link) out += (out.empty() ? "" : " ") + m->obj;
+        std::println("{}", out);
+        return 0;
     }
     if (!args.empty() && args[0] == "toolchain") {
         const std::string file = args.size() > 1 ? std::string(args[1]) : "squared/build/toolchain.lua";

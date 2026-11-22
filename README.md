@@ -51,6 +51,7 @@ once. Other tools call it as the SDK's tools call each other (squared's
 
 ```sh
 sqmake toolchain                                    # what it found, where, and why
+clang++ -std=c++23 $(sqmake std -std=c++23) hello.cpp -o hello   # import std, by hand
 sqmake describe                                     # what it can be asked
 echo '{"sq": 1, "command": "build", "args": {"dir": "game"}}' | sqmake call
 # {"sq": 1, "ok": true, "result": {"ran": 4, "up_to_date": 2, "explained": false}}
