@@ -336,6 +336,21 @@ touch wf/in/c
 (cd wf && "$sqmake" > out.txt 2>&1) && grep -q 'in/c' wf/build/copy.txt || die "write_file: a new file not listed: $(cat wf/out.txt)"
 ok "write_file: written when it changes, and only then"
 
+# read_file: a file's text, at most max bytes of it, or nil.
+mkdir -p rf
+cat > rf/build.lua <<'L'
+local kept = read_file("kept.txt")
+if not kept then write_file("kept.txt", "first\n") end
+assert(read_file("kept.txt") == "first\n", "read_file: what write_file wrote")
+assert(read_file("missing.txt") == nil, "read_file: nil for a file that is not there")
+assert(#read_file("/dev/urandom", 16) == 16, "read_file: 16 bytes of /dev/urandom")
+assert(read_file("kept.txt", 3) == "fir", "read_file: at most max bytes")
+target{out = "build/x", ins = {"kept.txt"}, cmd = {"cp", "kept.txt", "build/x"}}
+default("build/x")
+L
+(cd rf && "$sqmake" > out.txt 2>&1) || die "read_file: $(cat rf/out.txt)"
+ok "read_file: a file's text, at most max bytes, nil when missing"
+
 # A generated source and header (as sqgen's): the generator runs first, the
 # compiles that include its header wait for it, and the generated source's
 # imports (given, as it is not there to read) order it after the module.
