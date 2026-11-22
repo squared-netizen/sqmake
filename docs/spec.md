@@ -337,7 +337,9 @@ the first's.
 The cache is `$SQMAKE_CACHE`, else `$PREFIX/var/cache/sqmake` (sqterm's),
 else `~/.cache/sqmake`; `SQMAKE_CACHE=off` is none. Entries are written
 whole, beside, then renamed into place, so builds at once never see half
-of one. Not yet: pruning it (one APK's worth is about 70 MB).
+of one. It is kept under `$SQMAKE_CACHE_SIZE` megabytes (512 unless said;
+one APK's worth is about 70 MB): after a build over it, the entries used
+longest ago go until it is under four fifths of it (0.9.1).
 
 ## 7. The library and the command line
 

@@ -58,7 +58,11 @@ public:
                 if (d.has_parent_path()) std::filesystem::create_directories(d.parent_path(), ec);
                 whole = std::filesystem::copy_file(entry.path() / "depfile", d, std::filesystem::copy_options::overwrite_existing, ec);
             }
-            if (whole) return true;
+            if (whole) {
+                // Used now: pruning keeps what was used last.
+                std::filesystem::last_write_time(entry.path() / "read", std::filesystem::file_time_type::clock::now(), ec);
+                return true;
+            }
         }
         return false;
     }
@@ -138,6 +142,58 @@ private:
     std::string dir_;
     std::map<std::string, std::string> sums_;
 };
+
+/// Keeps the cache under `limit` bytes: when it is over, the entries used
+/// longest ago are removed until it is under four fifths of it. Returns
+/// how many entries went.
+inline std::size_t prune_cache(const std::string& dir, std::uintmax_t limit) {
+    if (dir.empty()) return 0;
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    struct Entry {
+        fs::path path;
+        fs::file_time_type used;
+        std::uintmax_t bytes = 0;
+    };
+    std::vector<Entry> entries;
+    std::uintmax_t total = 0;
+    // dir/xx/KEY/ENTRY/{out0.., depfile, read}
+    for (const auto& shard : fs::directory_iterator(dir, ec)) {
+        if (!shard.is_directory(ec)) continue;
+        for (const auto& key : fs::directory_iterator(shard.path(), ec)) {
+            if (!key.is_directory(ec)) continue;
+            for (const auto& e : fs::directory_iterator(key.path(), ec)) {
+                if (!e.is_directory(ec) || e.path().filename().string().starts_with(".")) continue;
+                Entry entry{e.path(), fs::last_write_time(e.path() / "read", ec), 0};
+                for (const auto& f : fs::directory_iterator(e.path(), ec)) entry.bytes += f.file_size(ec);
+                total += entry.bytes;
+                entries.push_back(std::move(entry));
+            }
+        }
+    }
+    if (total <= limit) return 0;
+    std::ranges::sort(entries, {}, &Entry::used);
+    std::size_t removed = 0;
+    for (const Entry& e : entries) {
+        if (total <= limit / 5 * 4) break;
+        fs::remove_all(e.path, ec);
+        if (ec) continue;
+        total -= e.bytes;
+        ++removed;
+        fs::remove(e.path.parent_path(), ec);  // the key, once it holds nothing
+    }
+    return removed;
+}
+
+/// The cache's limit: $SQMAKE_CACHE_SIZE megabytes, 512 unless said.
+inline std::uintmax_t cache_limit() {
+    std::uintmax_t mb = 512;
+    if (const char* s = std::getenv("SQMAKE_CACHE_SIZE"); s != nullptr && *s != '\0') {
+        const std::string_view v(s);
+        std::from_chars(v.data(), v.data() + v.size(), mb);
+    }
+    return mb * 1024 * 1024;
+}
 
 /// Where the cache is: $SQMAKE_CACHE ("off": none), else $PREFIX/var/cache/
 /// sqmake (sqterm's), else ~/.cache/sqmake.
