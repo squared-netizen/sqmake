@@ -934,8 +934,8 @@ private:
                 return std::unexpected("import std: no libc++ std.cppm (set toolchain.std_cppm, or use toolchain.sdk)");
             const std::string obj = build_dir_ + "/obj/std.o", pcm = bmis + "/std.pcm";
             std::vector<std::string> argv = base();
-            argv.insert(argv.end(), {"-Wno-reserved-module-identifier", "-MMD", "-MF", obj + ".d", "-c", std_cppm,
-                                     "-fmodule-output=" + pcm, "-o", obj});
+            argv.insert(argv.end(), {"-Wno-reserved-module-identifier", "-Xclang", "-fmodules-embed-all-files", "-MMD",
+                                     "-MF", obj + ".d", "-c", std_cppm, "-fmodule-output=" + pcm, "-o", obj});
             if (auto r = graph_.add(Target{{obj, pcm}, {std_cppm}, Command{argv}, obj + ".d", "module std"}); !r) return std::unexpected(r.error());
             provider["std"] = pcm;
         }
@@ -954,9 +954,12 @@ private:
             t.depfile = u.obj + ".d";
             t.command.argv.insert(t.command.argv.end(), {"-MMD", "-MF", t.depfile, "-c", u.src});
             if (u.scanned.provides) {
+                // A BMI carries its sources: one taken from the shared cache
+                // (§6.3) into another folder needs none of the first's files.
                 const std::string pcm = provider[*u.scanned.provides];
                 t.outputs.push_back(pcm);
-                t.command.argv.push_back("-fmodule-output=" + pcm);
+                t.command.argv.insert(t.command.argv.end(),
+                                      {"-Xclang", "-fmodules-embed-all-files", "-fmodule-output=" + pcm});
             }
             t.command.argv.insert(t.command.argv.end(), {"-o", u.obj});
             t.description = (u.scanned.provides ? "module " + *u.scanned.provides + " " : "cxx ") + u.src;
