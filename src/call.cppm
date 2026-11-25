@@ -155,7 +155,7 @@ inline JsonValue describe() {
              {"plan", JsonValue(O{{"summary", JsonValue("the targets a build needs, in order, with their commands")},
                                   {"args", JsonValue(O{{"dir", dir}, {"file", file}, {"goals", goals},
                                                        {"debug", arg("boolean", "the debug build")}})},
-                                  {"result", JsonValue("{targets: [{outputs, inputs, command, description, action}], verbs}")}})},
+                                  {"result", JsonValue("{targets: [{outputs, inputs, command, description, action}], verbs, actions: [{name, description}]}")}})},
              {"clean", JsonValue(O{{"summary", JsonValue("remove the build file's outputs and the state")},
                                    {"args", JsonValue(O{{"dir", dir}, {"file", file}, {"debug", arg("boolean", "the debug build's")}})},
                                    {"result", JsonValue("{removed}")}})},
@@ -252,7 +252,18 @@ inline JsonValue call(const JsonValue& request) {
         std::vector<std::string> said;
         for (std::string_view v : verbs)
             if (graph.maker(std::string(v))) said.emplace_back(v);
-        return ok(JsonValue(JsonValue::Object{{"targets", JsonValue(std::move(targets))}, {"verbs", strings_json(said)}}));
+        // And every action it names, built or not (an action is never a
+        // default): what a tool offers beside the verbs.
+        JsonValue::Array actions;
+        for (const Target& t : graph.targets()) {
+            if (!t.action || t.outputs.empty()) continue;
+            if (is_verb(t.outputs.front())) continue;  // a verb is offered as one
+            actions.emplace_back(JsonValue::Object{{"name", JsonValue(t.outputs.front())},
+                                                   {"description", JsonValue(t.description)}});
+        }
+        return ok(JsonValue(JsonValue::Object{{"targets", JsonValue(std::move(targets))},
+                                              {"verbs", strings_json(said)},
+                                              {"actions", JsonValue(std::move(actions))}}));
     }
     State state = State::load(state_file);
     Runner runner(graph, state, {.jobs = jobs, .explain = explain, .extra_hash = (*ctx)->fingerprint(), .out = stderr, .cache = cache_dir()});
