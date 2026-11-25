@@ -449,3 +449,5 @@ The questions draft 0.1 left open, decided as recommended, and one more:
    libraries) and template.android.cpp's `sq/build/template.lua` build
    sqterm's APK with no make and no shell.
 4. **The switch**: sqterm built and installed with sqmake, on the phone.
+   sqmake itself (2026-11-25): its `build.lua`, and `tools/bootstrap.sh`,
+   which makes the first sqmake with a compiler and a shell; no Makefile.
