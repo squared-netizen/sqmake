@@ -362,6 +362,17 @@ of one. It is kept under `$SQMAKE_CACHE_SIZE` megabytes (512 unless said;
 one APK's worth is about 70 MB): after a build over it, the entries used
 longest ago go until it is under four fifths of it (0.9.1).
 
+### 6.4 The compile database (decided 2026-11-25, 0.13.0)
+
+Every build writes `<build>/compile_commands.json`: each compile the
+build file describes (a C or C++ source, a module unit, std), with its
+folder, its source, its whole command and its object, as clang's tools
+read it (clang-tidy, clangd). It is written before anything runs, so the
+sources a failed build did not reach are in it, and only when it changes.
+A module unit's command names the folder of the BMIs it imports: a tool
+reading it needs the build to have made them (squared's lint builds
+first).
+
 ## 7. The library and the command line
 
 ### 7.1 Packaging (decided)

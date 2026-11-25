@@ -60,6 +60,10 @@ L
 [ "$(build/hello)" = 42 ] || die "the program says $(build/hello)"
 ok "first build: 3 objects and a link; the program runs"
 
+[ "$(grep -c '"file": "src/' build/compile_commands.json)" = 3 ] && grep -q '"output": "build/obj/src/two.cpp.o"' build/compile_commands.json ||
+    die "compile_commands.json is not the 3 compiles: $(cat build/compile_commands.json)"
+ok "compile_commands.json: each compile, its command and its object"
+
 "$sqmake" > out.txt
 grep -q 'up to date' out.txt && [ "$(ran out.txt)" = 0 ] || die "a second build ran something: $(cat out.txt)"
 ok "no change: up to date"

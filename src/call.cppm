@@ -38,7 +38,7 @@ export namespace sqmake {
 
 using sq::data::JsonValue;
 
-inline constexpr std::string_view tool_version = "0.12.0";
+inline constexpr std::string_view tool_version = "0.13.0";
 
 namespace calldetail {
 
@@ -127,6 +127,38 @@ private:
 };
 
 }  // namespace calldetail
+
+/// <build>/compile_commands.json: every compile the build file describes (a
+/// C or C++ source, a module unit, std), as clang's tools read it (clang-tidy,
+/// clangd): the folder, the source, the whole command, what it writes.
+/// Written before anything runs, so the sources a failed build did not reach
+/// are in it too; rewritten only when it changes.
+inline void write_compile_commands(const Graph& graph, const std::string& build_dir) {
+    std::error_code ec;
+    const std::string here = std::filesystem::current_path(ec).string();
+    JsonValue::Array entries;
+    for (const Target& t : graph.targets()) {
+        const std::vector<std::string>& argv = t.command.argv;
+        if (t.action || argv.empty() || t.outputs.empty()) continue;
+        const auto c = std::ranges::find(argv, std::string_view("-c"));
+        if (c == argv.end() || c + 1 == argv.end()) continue;
+        JsonValue::Array arguments;
+        for (const std::string& a : argv) arguments.emplace_back(a);
+        entries.emplace_back(JsonValue::Object{{"directory", JsonValue(here)},
+                                               {"file", JsonValue(*(c + 1))},
+                                               {"arguments", JsonValue(std::move(arguments))},
+                                               {"output", JsonValue(t.outputs.front())}});
+    }
+    auto text = sq::data::write_json(JsonValue(std::move(entries)), {.pretty = true, .newline_at_end = true});
+    if (!text) return;
+    const std::filesystem::path file = std::filesystem::path(build_dir) / "compile_commands.json";
+    {
+        std::ifstream in(file, std::ios::binary);
+        if (in && std::string(std::istreambuf_iterator<char>(in), {}) == text.text) return;
+    }
+    std::filesystem::create_directories(file.parent_path(), ec);
+    std::ofstream(file, std::ios::binary) << text.text;
+}
 
 /// What sqmake can be asked, as JSON (the protocol's `describe`).
 inline JsonValue describe() {
@@ -265,6 +297,7 @@ inline JsonValue call(const JsonValue& request) {
                                               {"verbs", strings_json(said)},
                                               {"actions", JsonValue(std::move(actions))}}));
     }
+    write_compile_commands(graph, (*ctx)->build_dir());
     State state = State::load(state_file);
     Runner runner(graph, state, {.jobs = jobs, .explain = explain, .extra_hash = (*ctx)->fingerprint(), .out = stderr, .cache = cache_dir()});
     auto result = runner.run(*plan);

@@ -167,6 +167,7 @@ int main(int argc, char** argv) {
     if (goals.empty()) return fail(file + " names no default (default(...)) and no goal was given");
     auto plan = graph.plan(goals);
     if (!plan) return fail(plan.error());
+    sqmake::write_compile_commands(graph, (*ctx)->build_dir());
     sqmake::State state = sqmake::State::load(state_file);
     sqmake::Runner runner(graph, state, {.jobs = jobs, .explain = explain, .extra_hash = (*ctx)->fingerprint(), .cache = sqmake::cache_dir()});
     auto result = runner.run(*plan);
