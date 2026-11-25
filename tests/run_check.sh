@@ -175,6 +175,17 @@ json() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.arg
 "$sqmake" describe | json 'd["tool"] + " " + ",".join(sorted(d["commands"]))' | grep -qx 'sqmake build,clean,plan,toolchain' || die "describe"
 echo '{"sq": 1, "command": "plan", "args": {"dir": "mods"}}' | "$sqmake" call > resp.json || die "call plan: $(cat resp.json)"
 [ "$(json 'len(d["result"]["targets"])' < resp.json)" = 6 ] || die "call plan's targets: $(cat resp.json)"
+# Its verbs and every action it names (none is a default), for a tool to offer.
+mkdir -p acts
+cat > acts/build.lua <<'LUA'
+target{out = "out.txt", ins = {}, cmd = {"touch", "out.txt"}, desc = "touch"}
+default("out.txt")
+verb("run", {needs = {"out.txt"}, call = function() return 0 end})
+action{name = "logcat", desc = "the device's log", cmd = {"echo", "log"}}
+LUA
+echo '{"sq": 1, "command": "plan", "args": {"dir": "acts"}}' | "$sqmake" call > resp.json || die "call plan, actions: $(cat resp.json)"
+[ "$(json 'd["result"]["verbs"], [a["name"] for a in d["result"]["actions"]]' < resp.json)" = "(['build', 'run'], ['logcat'])" ] ||
+    die "call plan: verbs and actions: $(cat resp.json)"
 touch mods/src/main.cpp
 echo '{"sq": 1, "command": "build", "args": {"dir": "mods", "explain": true}}' | "$sqmake" call 2> /dev/null > resp.json
 [ "$(json 'd["ok"], d["result"]["ran"], d["result"]["explained"]' < resp.json)" = "(True, 2, True)" ] || die "call build, explain: $(cat resp.json)"
