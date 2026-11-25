@@ -1,6 +1,8 @@
 # Builds sqmake with clang and libc++ 23 (the SDK's toolchain, from
-# apt.llvm.org) and runs make test: the unit tests, the embedded-Lua test
-# and tests/run_check.sh, sqmake building and rebuilding a C++ program.
+# apt.llvm.org): tools/bootstrap.sh makes the first one, which builds
+# sqmake from build.lua; then sqmake test: the unit tests, the embedded-Lua
+# test and tests/run_check.sh, sqmake building and rebuilding a C++ program.
+# No make.
 name: test
 
 on:
@@ -24,9 +26,12 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y --no-install-recommends clang-23 lld-23 llvm-23 libc++-23-dev libc++abi-23-dev
           echo "/usr/lib/llvm-23/bin" >> "$GITHUB_PATH"
-      - name: make test
+      - name: bootstrap, then sqmake test
         env:
           CXX: clang++
+          CC: clang
+          AR: llvm-ar
         run: |
           clang++ --version | head -n 1
-          make -j4 test CXX=clang++ AR=llvm-ar
+          sh tools/bootstrap.sh
+          build/sqmake test

@@ -8,7 +8,9 @@ modules with the SDK's toolchain. Conventions and building sqterm come next
 ([docs/spec.md §11](docs/spec.md)).
 
 ```sh
-make CXX="clang++ -stdlib=libc++"     # clang and libc++ 23; make test checks it
+sh tools/bootstrap.sh                 # the first sqmake (clang and libc++ 23, a shell);
+                                      # then it builds itself: build/sqmake
+build/sqmake test                     # the unit tests and tests/run_check.sh
 build/sqmake                          # builds what build.lua's default() names
 build/sqmake --explain                # each command that would run, and why
 build/sqmake -j 4 GOAL                # a goal, four commands at once
