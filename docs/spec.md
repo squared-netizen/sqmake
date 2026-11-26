@@ -373,6 +373,16 @@ A module unit's command names the folder of the BMIs it imports: a tool
 reading it needs the build to have made them (squared's lint builds
 first).
 
+### 6.5 Where an object goes (decided 2026-11-26, 0.13.1)
+
+`rules.cxx`, `rules.cc` and `rules.module` put a source's object at
+`<build>/obj/` and the source's own path, with what would leave that
+folder renamed: a `..` part is `__`, a leading `/` is `_/`
+(`../lib/a.cpp` makes `obj/__/lib/a.cpp.o`, `/src/b.cpp` makes
+`obj/_/src/b.cpp.o`). Before 0.13.1 the path was appended as it was, so a
+source three folders up (a package beside the project, say) had its
+object written outside the build folder, beside the build file.
+
 ## 7. The library and the command line
 
 ### 7.1 Packaging (decided)

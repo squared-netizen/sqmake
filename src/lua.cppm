@@ -78,16 +78,28 @@ toolchain = {
   build = "build",
 }
 rules = {}
+-- Where a source's object goes: under <build>/obj/, at the source's own path,
+-- but for what would leave that folder: a ".." part is "__" and a leading "/"
+-- is "_/" (../lib/a.cpp: obj/__/lib/a.cpp.o; /src/b.cpp: obj/_/src/b.cpp.o),
+-- so a source from anywhere has its object in the build folder.
+local function object_of(src)
+  local parts = {}
+  if src:sub(1, 1) == "/" then parts[1] = "_" end
+  for part in src:gmatch("[^/]+") do
+    if part ~= "." then parts[#parts + 1] = part == ".." and "__" or part end
+  end
+  return toolchain.build .. "/obj/" .. table.concat(parts, "/") .. ".o"
+end
 -- A C++ source compiled to an object; its headers found by -MMD.
 -- flags: the source's own (a library's include folders and defines).
 function rules.cxx(src, flags, opts)
-  local obj = toolchain.build .. "/obj/" .. src .. ".o"
+  local obj = object_of(src)
   target{out = obj, ins = {src, (opts or {}).after or {}}, depfile = obj .. ".d", desc = "cxx " .. src,
          cmd = {toolchain.cxx, toolchain.cxxflags, flags or {}, "-MMD", "-MF", obj .. ".d", "-c", src, "-o", obj}}
   return obj
 end
 function rules.cc(src, flags, opts)
-  local obj = toolchain.build .. "/obj/" .. src .. ".o"
+  local obj = object_of(src)
   target{out = obj, ins = {src, (opts or {}).after or {}}, depfile = obj .. ".d", desc = "cc " .. src,
          cmd = {toolchain.cc, toolchain.cflags, flags or {}, "-MMD", "-MF", obj .. ".d", "-c", src, "-o", obj}}
   return obj
@@ -97,7 +109,7 @@ end
 -- opts: after = files it waits for (generated headers); imports = its
 -- imports, for a generated source (not there yet to scan).
 function rules.module(src, flags, opts)
-  local obj = toolchain.build .. "/obj/" .. src .. ".o"
+  local obj = object_of(src)
   module_unit(src, obj, flags or {}, opts or {})
   return obj
 end
