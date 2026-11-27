@@ -383,6 +383,14 @@ folder renamed: a `..` part is `__`, a leading `/` is `_/`
 source three folders up (a package beside the project, say) had its
 object written outside the build folder, beside the build file.
 
+### 6.6 The archiver (decided 2026-11-27, 0.13.2)
+
+A library is archived by `toolchain.ar` when the build file or
+`toolchain.sdk` names one; otherwise by `$AR` (in words, as `$CXX`), else
+the first of `ar` and `llvm-ar` found on `$PATH`, else `ar`. sqterm's llvm
+package has `llvm-ar` and no `ar`, so a build file that sets no toolchain
+(squared-pg's, sqcart's) failed there with status 127 before 0.13.2.
+
 ## 7. The library and the command line
 
 ### 7.1 Packaging (decided)

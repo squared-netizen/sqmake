@@ -38,7 +38,7 @@ export namespace sqmake {
 
 using sq::data::JsonValue;
 
-inline constexpr std::string_view tool_version = "0.13.1";
+inline constexpr std::string_view tool_version = "0.13.2";
 
 namespace calldetail {
 
