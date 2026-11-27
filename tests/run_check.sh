@@ -64,6 +64,21 @@ ok "first build: 3 objects and a link; the program runs"
     die "compile_commands.json is not the 3 compiles: $(cat build/compile_commands.json)"
 ok "compile_commands.json: each compile, its command and its object"
 
+# A source outside the project, by a relative path and an absolute one: its
+# object in the build folder all the same, nothing written beside it.
+mkdir -p far/away proj
+printf 'int far() { return 1; }\n' > far/away/far.cpp
+printf 'int far(); int abs_one() { return 2; }\nint main() { return far() + abs_one() == 3 ? 0 : 1; }\n' > far/abs.cpp
+cat > proj/build.lua <<L
+toolchain.cxxflags = {"-std=c++23", "-O1"}
+exe("out", {rules.cxx("../far/away/far.cpp"), rules.cxx("$work/far/abs.cpp")})
+L
+(cd proj && "$sqmake" > out.txt 2>&1) && proj/build/out || die "sources outside the project: $(cat proj/out.txt)"
+[ -f proj/build/obj/__/far/away/far.cpp.o ] && [ -f "proj/build/obj/_$work/far/abs.cpp.o" ] ||
+    die "the objects are not under build/obj: $(find proj far -name '*.o')"
+[ -z "$(find far -name '*.o')" ] || die "an object was written outside the build folder: $(find far -name '*.o')"
+ok "a source outside the project: its object under build/obj (.. as __, / as _/), none beside the source"
+
 "$sqmake" > out.txt
 grep -q 'up to date' out.txt && [ "$(ran out.txt)" = 0 ] || die "a second build ran something: $(cat out.txt)"
 ok "no change: up to date"
