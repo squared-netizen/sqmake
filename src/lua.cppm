@@ -78,6 +78,27 @@ toolchain = {
   build = "build",
 }
 rules = {}
+-- The archiver, when the build file and toolchain.sdk name none: $AR (in
+-- words, as $CXX), else the first of ar and llvm-ar on $PATH (sqterm's llvm
+-- has llvm-ar and no ar), else ar. Looked for once, when a library is made.
+local found_ar
+local function default_ar()
+  if found_ar then return found_ar end
+  if os.getenv("AR") then
+    found_ar = words(os.getenv("AR"))
+    return found_ar
+  end
+  for _, name in ipairs({"ar", "llvm-ar"}) do
+    for dir in (os.getenv("PATH") or ""):gmatch("[^:]+") do
+      if #glob(dir .. "/" .. name) > 0 then
+        found_ar = {dir .. "/" .. name}
+        return found_ar
+      end
+    end
+  end
+  found_ar = {"ar"}
+  return found_ar
+end
 -- Where a source's object goes: under <build>/obj/, at the source's own path,
 -- but for what would leave that folder: a ".." part is "__" and a leading "/"
 -- is "_/" (../lib/a.cpp: obj/__/lib/a.cpp.o; /src/b.cpp: obj/_/src/b.cpp.o),
@@ -135,7 +156,7 @@ end
 -- A static library of objects.
 function lib(name, objs)
   local out = toolchain.build .. "/lib" .. name .. ".a"
-  target{out = out, ins = objs, desc = "ar lib" .. name .. ".a", cmd = {toolchain.ar or "ar", "rcs", out, objs}}
+  target{out = out, ins = objs, desc = "ar lib" .. name .. ".a", cmd = {toolchain.ar or default_ar(), "rcs", out, objs}}
   return out
 end
 -- A program linked from objects (and libraries); built by default. A
