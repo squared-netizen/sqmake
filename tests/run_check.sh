@@ -85,16 +85,17 @@ real_ar=$(command -v ar || command -v llvm-ar) || die "no ar or llvm-ar here to 
 real_cxx=$(command -v "${CXX%% *}") || die "no $CXX"
 mkdir -p arch/src arch/onlyllvm arch/mine
 printf 'int one() { return 1; }\n' > arch/src/one.cpp
-printf 'int one();\nint main() { return one() == 1 ? 0 : 1; }\n' > arch/src/main.cpp
+# A library alone: compiled and archived, no link (a linker is found on
+# $PATH, which the test takes away).
 cat > arch/build.lua <<'L'
 toolchain.cxxflags = {"-std=c++23", "-O1"}
-exe{name = "uses", srcs = {"src/main.cpp"}, deps = {library{name = "one", srcs = {"src/one.cpp"}}}}
+default(library{name = "one", srcs = {"src/one.cpp"}}.out)
 L
 for stub in onlyllvm/llvm-ar mine/my-ar; do
     printf '#!/bin/sh\necho %s >> "%s/arch/which.txt"\nexec "%s" "$@"\n' "${stub##*/}" "$work" "$real_ar" > "arch/$stub"
     chmod +x "arch/$stub"
 done
-(cd arch && CXX=$real_cxx PATH=$work/arch/onlyllvm "$sqmake" > out.txt 2>&1) && arch/build/uses &&
+(cd arch && CXX=$real_cxx PATH=$work/arch/onlyllvm "$sqmake" > out.txt 2>&1) && [ -s arch/build/libone.a ] &&
     grep -qx llvm-ar arch/which.txt || die "no ar on PATH: llvm-ar was not used: $(cat arch/out.txt)"
 "$sqmake" -C arch clean > /dev/null && : > arch/which.txt
 (cd arch && CXX=$real_cxx AR=$work/arch/mine/my-ar PATH=$work/arch/onlyllvm "$sqmake" > out.txt 2>&1) &&
